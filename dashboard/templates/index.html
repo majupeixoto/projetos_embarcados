@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VitaLink — Central de Monitoramento</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, body { font-family: 'Inter', sans-serif; }
+    .mono   { font-family: 'JetBrains Mono', monospace; }
+
+    /* Sidebar */
+    .sidebar { background: linear-gradient(175deg, #0f172a 0%, #1a3254 100%); }
+    .nav-item { transition: all .2s ease; border-left: 3px solid transparent; }
+    .nav-item:hover { background: rgba(255,255,255,.07); }
+    .nav-item.active { background: rgba(59,130,246,.2); border-left-color: #3b82f6; }
+
+    /* Status ring */
+    .ring-transition { transition: background .5s ease, box-shadow .5s ease; }
+
+    /* Pulse animation for ALERT state */
+    @keyframes sonar {
+      0%   { transform: scale(.9); opacity: .8; }
+      100% { transform: scale(1.8); opacity: 0; }
+    }
+    .sonar::before, .sonar::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 9999px;
+      background: rgba(239,68,68,.35);
+      animation: sonar 1.4s ease-out infinite;
+    }
+    .sonar::after { animation-delay: .5s; background: rgba(239,68,68,.2); }
+
+    /* Heartbeat icon */
+    @keyframes beat { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+    .beat { animation: beat 1.8s ease-in-out infinite; }
+
+    /* Slide-in for new event rows */
+    @keyframes slidein {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .slidein { animation: slidein .3s ease forwards; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar       { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+    /* Flash highlight on number change */
+    @keyframes flash { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+    .flash { animation: flash .4s ease; }
+  </style>
+</head>
+
+<body class="bg-slate-100 flex h-screen overflow-hidden text-slate-800">
+
+<!-- ════════════════════════════════════════════════════════════════
+     SIDEBAR
+═════════════════════════════════════════════════════════════════ -->
+<aside class="sidebar w-64 flex-shrink-0 flex flex-col text-white">
+
+  <!-- Logo -->
+  <div class="px-6 py-5 border-b border-white/10">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center shadow-lg shadow-blue-900/40">
+        <i class="fas fa-heartbeat text-white text-lg beat"></i>
+      </div>
+      <div>
+        <p class="text-lg font-bold tracking-tight leading-none">VitaLink</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">Monitoramento 24h</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Nav -->
+  <nav class="flex-1 px-3 py-5 space-y-0.5">
+    <p class="text-[10px] text-slate-500 uppercase tracking-widest px-3 mb-2">Principal</p>
+
+    <a href="#" class="nav-item active flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium">
+      <i class="fas fa-chart-line w-4 text-center text-blue-400"></i> Dashboard
+    </a>
+    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
+      <i class="fas fa-watch w-4 text-center"></i> Dispositivos
+    </a>
+    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
+      <i class="fas fa-clock-rotate-left w-4 text-center"></i> Histórico
+    </a>
+
+    <p class="text-[10px] text-slate-500 uppercase tracking-widest px-3 mt-5 mb-2">Gestão</p>
+    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
+      <i class="fas fa-users w-4 text-center"></i> Cuidadores
+    </a>
+    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
+      <i class="fas fa-bell w-4 text-center"></i> Notificações
+    </a>
+    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
+      <i class="fas fa-gear w-4 text-center"></i> Configurações
+    </a>
+  </nav>
+
+  <!-- Broker status pill -->
+  <div class="px-4 pb-5">
+    <div class="flex items-center gap-2.5 bg-white/5 rounded-xl px-4 py-3 border border-white/10">
+      <span id="broker-dot" class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0 animate-pulse"></span>
+      <div class="min-w-0">
+        <p class="text-[10px] text-slate-500 uppercase tracking-wider">Broker MQTT</p>
+        <p id="broker-label" class="text-xs font-medium text-white mono truncate">
+          {{ broker_host }}:{{ broker_port }}
+        </p>
+      </div>
+      <i id="broker-icon" class="fas fa-plug text-amber-400 text-xs flex-shrink-0 ml-auto"></i>
+    </div>
+  </div>
+
+</aside>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MAIN
+═════════════════════════════════════════════════════════════════ -->
+<main class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top bar -->
+  <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between flex-shrink-0">
+    <div>
+      <h1 class="text-lg font-bold text-slate-800">Central de Monitoramento</h1>
+      <p class="text-xs text-slate-400 mt-0.5">Acompanhamento em tempo real · Protocolo MQTT</p>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full">
+        <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span> AO VIVO
+      </div>
+      <div class="text-right">
+        <p id="clock" class="mono text-sm font-medium text-slate-700 tabular-nums">--:--:--</p>
+        <p id="dateline" class="text-[11px] text-slate-400"></p>
+      </div>
+    </div>
+  </header>
+
+  <!-- Scrollable content -->
+  <div class="flex-1 overflow-y-auto p-6 space-y-5">
+
+    <!-- ── STATUS HERO ────────────────────────────────────────────────── -->
+    <div id="hero-card" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 transition-all duration-500">
+      <div class="flex flex-col md:flex-row items-center gap-10">
+
+        <!-- Ring -->
+        <div class="relative flex-shrink-0">
+          <div id="status-ring"
+               class="ring-transition w-44 h-44 rounded-full bg-slate-100 flex items-center justify-center relative">
+            <i id="status-icon" class="fas fa-satellite-dish text-5xl text-slate-300 transition-all duration-500"></i>
+          </div>
+        </div>
+
+        <!-- Info -->
+        <div class="flex-1 text-center md:text-left">
+          <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold mb-2">Status do Dispositivo</p>
+          <h2 id="status-label"
+              class="text-6xl font-black text-slate-300 mb-3 leading-none tracking-tight transition-all duration-500">
+            AGUARDANDO
+          </h2>
+          <p id="status-desc" class="text-slate-400 text-sm max-w-md">
+            Nenhuma mensagem recebida. Inicie o Mosquitto e o simulador.
+          </p>
+
+          <!-- Chips -->
+          <div class="mt-5 flex flex-wrap gap-2 justify-center md:justify-start">
+            <span class="chip flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full">
+              <i class="fas fa-microchip text-[10px] text-blue-400"></i>
+              <span id="chip-device">—</span>
+            </span>
+            <span class="chip flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full">
+              <i class="fas fa-timer text-[10px] text-blue-400"></i>
+              Uptime: <span id="chip-uptime">—</span>
+            </span>
+            <span class="chip flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full">
+              <i class="fas fa-eye text-[10px] text-blue-400"></i>
+              Visto: <span id="chip-lastseen">—</span>
+            </span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── STATS ROW ──────────────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Alertas Hoje</p>
+          <div class="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center">
+            <i class="fas fa-bell text-red-500 text-xs"></i>
+          </div>
+        </div>
+        <p id="stat-alerts" class="text-4xl font-black text-slate-800">{{ alerts_today }}</p>
+        <p class="text-[11px] text-slate-400 mt-1">Botão de pânico acionado</p>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mensagens</p>
+          <div class="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
+            <i class="fas fa-envelope text-blue-500 text-xs"></i>
+          </div>
+        </div>
+        <p id="stat-msgs" class="text-4xl font-black text-slate-800">{{ history | length }}</p>
+        <p class="text-[11px] text-slate-400 mt-1">Recebidas nesta sessão</p>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Último Evento</p>
+          <div class="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center">
+            <i class="fas fa-signal text-violet-500 text-xs"></i>
+          </div>
+        </div>
+        <p id="stat-last" class="text-4xl font-black text-slate-800 mono">
+          {% if latest %}{{ latest.time_str }}{% else %}—{% endif %}
+        </p>
+        <p class="text-[11px] text-slate-400 mt-1">Horário local</p>
+      </div>
+
+    </div>
+
+    <!-- ── BOTTOM ROW ─────────────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <!-- Event Log (2/3) -->
+      <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 class="font-semibold text-slate-800 text-sm">Log de Eventos</h3>
+            <p class="text-[11px] text-slate-400">Atualizando em tempo real via MQTT</p>
+          </div>
+          <span class="text-[11px] text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full mono">
+            <span id="log-count">{{ history | length }}</span> registros
+          </span>
+        </div>
+
+        <div id="event-log" class="overflow-y-auto flex-1 divide-y divide-slate-50" style="max-height:320px">
+
+          {% if not history %}
+          <div id="empty-state" class="px-6 py-12 text-center text-slate-300">
+            <i class="fas fa-inbox text-4xl mb-3 block"></i>
+            <p class="text-sm font-medium">Nenhum evento ainda</p>
+            <p class="text-xs mt-1">Inicie o simulador e pressione ENTER</p>
+          </div>
+          {% else %}
+            {% for e in history %}
+            <div class="px-5 py-3.5 flex items-center gap-4 hover:bg-slate-50 transition-colors">
+              <span class="w-2 h-2 rounded-full flex-shrink-0
+                {% if e.status == 'alert' %}bg-red-500
+                {% elif e.status == 'online' %}bg-emerald-500
+                {% else %}bg-slate-400{% endif %}">
+              </span>
+              <div class="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center flex-shrink-0">
+                <i class="fas
+                  {% if e.status == 'alert' %}fa-bell text-red-400
+                  {% elif e.status == 'online' %}fa-circle-check text-emerald-400
+                  {% else %}fa-circle-xmark text-slate-400{% endif %}
+                  text-xs"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold text-slate-700">
+                  {% if e.status == 'alert' %}Botão de Pânico
+                  {% elif e.status == 'online' %}Online / Heartbeat
+                  {% else %}Offline{% endif %}
+                </p>
+                <p class="text-[11px] text-slate-400 mono">{{ e.device_id }} · uptime {{ e.uptime_str }}</p>
+              </div>
+              <div class="text-right flex-shrink-0">
+                <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full
+                  {% if e.status == 'alert' %}bg-red-100 text-red-700
+                  {% elif e.status == 'online' %}bg-emerald-100 text-emerald-700
+                  {% else %}bg-slate-100 text-slate-600{% endif %}">
+                  {{ e.status | upper }}
+                </span>
+                <p class="text-[11px] text-slate-400 mt-1 mono">{{ e.time_str }}</p>
+              </div>
+            </div>
+            {% endfor %}
+          {% endif %}
+
+        </div>
+      </div>
+
+      <!-- Device Card (1/3) -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <div class="px-6 py-4 border-b border-slate-100">
+          <h3 class="font-semibold text-slate-800 text-sm">Dispositivo</h3>
+          <p class="text-[11px] text-slate-400">Informações de hardware</p>
+        </div>
+        <div class="p-6">
+
+          <!-- Device icon + name -->
+          <div class="flex items-center gap-4 mb-6">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-200">
+              <i class="fas fa-watch text-white text-xl"></i>
+            </div>
+            <div>
+              <p id="dev-id" class="font-bold text-slate-800 text-base mono">
+                {% if latest %}{{ latest.device_id }}{% else %}—{% endif %}
+              </p>
+              <p class="text-[11px] text-slate-400">Pulseira ESP32</p>
+            </div>
+          </div>
+
+          <!-- Spec rows -->
+          <div class="space-y-0 text-sm divide-y divide-slate-50">
+
+            <div class="flex items-center justify-between py-3">
+              <span class="flex items-center gap-2 text-slate-500 text-xs">
+                <i class="fas fa-wifi w-3.5 text-center text-blue-400"></i> Protocolo
+              </span>
+              <span class="mono text-[11px] font-medium text-slate-700">MQTT / 1883</span>
+            </div>
+
+            <div class="flex items-center justify-between py-3">
+              <span class="flex items-center gap-2 text-slate-500 text-xs">
+                <i class="fas fa-hashtag w-3.5 text-center text-blue-400"></i> Tópico
+              </span>
+              <span class="mono text-[11px] font-medium text-slate-700">elderly/alerts</span>
+            </div>
+
+            <div class="flex items-center justify-between py-3">
+              <span class="flex items-center gap-2 text-slate-500 text-xs">
+                <i class="fas fa-timer w-3.5 text-center text-blue-400"></i> Uptime
+              </span>
+              <span id="dev-uptime" class="mono text-[11px] font-medium text-slate-700">
+                {% if latest %}{{ latest.uptime_str }}{% else %}—{% endif %}
+              </span>
+            </div>
+
+            <div class="flex items-center justify-between py-3">
+              <span class="flex items-center gap-2 text-slate-500 text-xs">
+                <i class="fas fa-circle-dot w-3.5 text-center text-blue-400"></i> Estado
+              </span>
+              <span id="dev-badge" class="text-[11px] font-semibold px-2.5 py-1 rounded-full
+                {% if latest and latest.status == 'alert' %}bg-red-100 text-red-700
+                {% elif latest and latest.status == 'online' %}bg-emerald-100 text-emerald-700
+                {% else %}bg-slate-100 text-slate-500{% endif %}">
+                {% if latest %}{{ latest.status | upper }}{% else %}—{% endif %}
+              </span>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- end scrollable content -->
+</main>
+
+<!-- ════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+═════════════════════════════════════════════════════════════════ -->
+<script>
+// ── Clock ──────────────────────────────────────────────────────────────────
+(function clock() {
+  const t = document.getElementById('clock');
+  const d = document.getElementById('dateline');
+  function tick() {
+    const n = new Date();
+    t.textContent = n.toLocaleTimeString('pt-BR');
+    d.textContent = n.toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long' });
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+
+// ── Alert sound via Web Audio API ──────────────────────────────────────────
+function playAlert() {
+  try {
+    const ctx = new AudioContext();
+    [880, 660, 880, 660].forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = freq; osc.type = 'sine';
+      const t = ctx.currentTime + i * 0.28;
+      gain.gain.setValueAtTime(0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.start(t); osc.stop(t + 0.28);
+    });
+  } catch(e) {}
+}
+
+// ── Status config ──────────────────────────────────────────────────────────
+const CFG = {
+  online: {
+    ringBg:    'bg-emerald-50',
+    shadow:    'shadow-[0_0_0_8px_rgba(16,185,129,0.15)]',
+    icon:      'fa-circle-check',
+    iconColor: 'text-emerald-500',
+    label:     'ONLINE',
+    labelCls:  'text-emerald-600',
+    desc:      'Dispositivo conectado. Idoso em segurança — tudo funcionando normalmente.',
+    cardBg:    'bg-white border-slate-200',
+    badge:     { text:'Online',  cls:'bg-emerald-100 text-emerald-700' },
+  },
+  alert: {
+    ringBg:    'bg-red-50 sonar',
+    shadow:    'shadow-[0_0_0_8px_rgba(239,68,68,0.15)]',
+    icon:      'fa-triangle-exclamation',
+    iconColor: 'text-red-500',
+    label:     'ALERTA!',
+    labelCls:  'text-red-600',
+    desc:      '🚨 Botão de pânico acionado! Verifique imediatamente o estado do idoso.',
+    cardBg:    'bg-red-50 border-red-300',
+    badge:     { text:'⚠ Alerta', cls:'bg-red-100 text-red-700' },
+  },
+  offline: {
+    ringBg:    'bg-slate-100',
+    shadow:    '',
+    icon:      'fa-circle-xmark',
+    iconColor: 'text-slate-400',
+    label:     'OFFLINE',
+    labelCls:  'text-slate-500',
+    desc:      'Dispositivo desconectado. Verifique a alimentação e o Wi-Fi da pulseira.',
+    cardBg:    'bg-white border-slate-200',
+    badge:     { text:'Offline', cls:'bg-slate-100 text-slate-600' },
+  },
+};
+
+// ── Counters ───────────────────────────────────────────────────────────────
+let alertsCount = {{ alerts_today }};
+let msgsCount   = {{ history | length }};
+
+function flash(el) {
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+}
+
+// ── Apply status to hero card ──────────────────────────────────────────────
+function applyStatus(ev) {
+  const cfg = CFG[ev.status] || CFG.offline;
+
+  // Ring
+  const ring = document.getElementById('status-ring');
+  ring.className = `ring-transition w-44 h-44 rounded-full flex items-center justify-center relative ${cfg.ringBg} ${cfg.shadow}`;
+
+  // Icon
+  const icon = document.getElementById('status-icon');
+  icon.className = `fas ${cfg.icon} text-5xl ${cfg.iconColor} transition-all duration-500`;
+
+  // Label
+  const lbl = document.getElementById('status-label');
+  lbl.className = `text-6xl font-black mb-3 leading-none tracking-tight transition-all duration-500 ${cfg.labelCls}`;
+  lbl.textContent = cfg.label;
+
+  // Desc
+  document.getElementById('status-desc').textContent = cfg.desc;
+
+  // Hero card bg
+  const card = document.getElementById('hero-card');
+  card.className = `rounded-2xl border shadow-sm p-8 transition-all duration-500 ${cfg.cardBg}`;
+
+  // Chips
+  document.getElementById('chip-device').textContent   = ev.device_id;
+  document.getElementById('chip-uptime').textContent   = ev.uptime_str || '—';
+  document.getElementById('chip-lastseen').textContent = ev.time_str;
+
+  // Stat — last event
+  const sl = document.getElementById('stat-last');
+  sl.textContent = ev.time_str;
+  flash(sl);
+
+  // Device card
+  document.getElementById('dev-id').textContent     = ev.device_id;
+  document.getElementById('dev-uptime').textContent = ev.uptime_str || '—';
+  const db = document.getElementById('dev-badge');
+  db.textContent = cfg.badge.text;
+  db.className   = `text-[11px] font-semibold px-2.5 py-1 rounded-full ${cfg.badge.cls}`;
+}
+
+// ── Event row builder ──────────────────────────────────────────────────────
+const ROW_CFG = {
+  alert:   { dot:'bg-red-500',     icon:'fa-bell text-red-400',           badge:'bg-red-100 text-red-700',         label:'Botão de Pânico'      },
+  online:  { dot:'bg-emerald-500', icon:'fa-circle-check text-emerald-400', badge:'bg-emerald-100 text-emerald-700', label:'Online / Heartbeat'  },
+  offline: { dot:'bg-slate-400',   icon:'fa-circle-xmark text-slate-400', badge:'bg-slate-100 text-slate-600',     label:'Offline'              },
+};
+
+function makeRow(ev) {
+  const c   = ROW_CFG[ev.status] || ROW_CFG.offline;
+  const div = document.createElement('div');
+  div.className = 'slidein px-5 py-3.5 flex items-center gap-4 hover:bg-slate-50 transition-colors';
+  div.innerHTML = `
+    <span class="w-2 h-2 rounded-full flex-shrink-0 ${c.dot}"></span>
+    <div class="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center flex-shrink-0">
+      <i class="fas ${c.icon} text-xs"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <p class="text-sm font-semibold text-slate-700">${c.label}</p>
+      <p class="text-[11px] text-slate-400 mono">${ev.device_id} · uptime ${ev.uptime_str || '—'}</p>
+    </div>
+    <div class="text-right flex-shrink-0">
+      <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full ${c.badge}">${ev.status.toUpperCase()}</span>
+      <p class="text-[11px] text-slate-400 mt-1 mono">${ev.time_str}</p>
+    </div>`;
+  return div;
+}
+
+function prependRow(ev) {
+  const log = document.getElementById('event-log');
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
+
+  log.insertBefore(makeRow(ev), log.firstChild);
+  while (log.children.length > 50) log.removeChild(log.lastChild);
+
+  msgsCount++;
+  const sm = document.getElementById('stat-msgs');
+  sm.textContent = msgsCount;
+  flash(sm);
+  document.getElementById('log-count').textContent = Math.min(msgsCount, 50);
+}
+
+// ── Broker indicator ───────────────────────────────────────────────────────
+function setBroker(ok) {
+  const dot  = document.getElementById('broker-dot');
+  const lbl  = document.getElementById('broker-label');
+  const icon = document.getElementById('broker-icon');
+  if (ok) {
+    dot.className  = 'w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0';
+    icon.className = 'fas fa-plug text-emerald-400 text-xs flex-shrink-0 ml-auto';
+    lbl.textContent = '{{ broker_host }}:{{ broker_port }}';
+  } else {
+    dot.className  = 'w-2 h-2 rounded-full bg-red-400 flex-shrink-0 animate-pulse';
+    icon.className = 'fas fa-plug-circle-xmark text-red-400 text-xs flex-shrink-0 ml-auto';
+    lbl.textContent = 'Desconectado';
+  }
+}
+
+// ── Socket.IO ──────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on('connect',    () => setBroker(true));
+socket.on('disconnect', () => setBroker(false));
+
+socket.on('broker_status', (d) => setBroker(d.connected));
+
+socket.on('mqtt_event', (ev) => {
+  applyStatus(ev);
+  prependRow(ev);
+
+  if (ev.status === 'alert') {
+    alertsCount++;
+    const sa = document.getElementById('stat-alerts');
+    sa.textContent = alertsCount;
+    flash(sa);
+    playAlert();
+  }
+});
+</script>
+</body>
+</html>
