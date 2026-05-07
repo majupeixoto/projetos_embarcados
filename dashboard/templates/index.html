@@ -483,16 +483,51 @@ function applyStatus(ev) {
 }
 
 // ── Event row builder ──────────────────────────────────────────────────────
-const ROW_CFG = {
-  alert:   { dot:'bg-red-500',     icon:'fa-bell text-red-400',           badge:'bg-red-100 text-red-700',         label:'Botão de Pânico'      },
-  online:  { dot:'bg-emerald-500', icon:'fa-circle-check text-emerald-400', badge:'bg-emerald-100 text-emerald-700', label:'Online / Heartbeat'  },
-  offline: { dot:'bg-slate-400',   icon:'fa-circle-xmark text-slate-400', badge:'bg-slate-100 text-slate-600',     label:'Offline'              },
-};
+
+// Resolve label e estilo a partir do status + cause do evento
+function resolveRowCfg(ev) {
+  if (ev.status === 'alert') {
+    if (ev.cause === 'fall') {
+      return {
+        dot:   'bg-orange-500',
+        icon:  'fa-person-falling text-orange-400',
+        badge: 'bg-orange-100 text-orange-700',
+        label: 'Queda Detectada',
+      };
+    }
+    return {
+      dot:   'bg-red-500',
+      icon:  'fa-bell text-red-400',
+      badge: 'bg-red-100 text-red-700',
+      label: 'Botão de Pânico',
+    };
+  }
+  if (ev.status === 'online') {
+    return {
+      dot:   'bg-emerald-500',
+      icon:  'fa-circle-check text-emerald-400',
+      badge: 'bg-emerald-100 text-emerald-700',
+      label: 'Online / Heartbeat',
+    };
+  }
+  return {
+    dot:   'bg-slate-400',
+    icon:  'fa-circle-xmark text-slate-400',
+    badge: 'bg-slate-100 text-slate-600',
+    label: 'Offline',
+  };
+}
 
 function makeRow(ev) {
-  const c   = ROW_CFG[ev.status] || ROW_CFG.offline;
+  const c   = resolveRowCfg(ev);
   const div = document.createElement('div');
   div.className = 'slidein px-5 py-3.5 flex items-center gap-4 hover:bg-slate-50 transition-colors';
+
+  // Linha de detalhe: mostra accel_g para quedas, uptime para os demais
+  const detail = (ev.cause === 'fall' && ev.accel_g > 0)
+    ? `impacto ${ev.accel_g.toFixed(2)} g · uptime ${ev.uptime_str || '—'}`
+    : `${ev.device_id} · uptime ${ev.uptime_str || '—'}`;
+
   div.innerHTML = `
     <span class="w-2 h-2 rounded-full flex-shrink-0 ${c.dot}"></span>
     <div class="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center flex-shrink-0">
@@ -500,7 +535,7 @@ function makeRow(ev) {
     </div>
     <div class="flex-1 min-w-0">
       <p class="text-sm font-semibold text-slate-700">${c.label}</p>
-      <p class="text-[11px] text-slate-400 mono">${ev.device_id} · uptime ${ev.uptime_str || '—'}</p>
+      <p class="text-[11px] text-slate-400 mono">${detail}</p>
     </div>
     <div class="text-right flex-shrink-0">
       <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full ${c.badge}">${ev.status.toUpperCase()}</span>
