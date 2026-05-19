@@ -63,7 +63,7 @@ def on_connect(client, userdata, flags, rc, properties=None):
     else:
         print(f"[MQTT] Falha na conexão (rc={rc})")
 
-def on_disconnect(client, userdata, rc, properties=None):
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
     global broker_connected
     broker_connected = False
     print("[MQTT] Desconectado do broker")

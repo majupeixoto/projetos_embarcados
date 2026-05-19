@@ -35,19 +35,28 @@ Core 0 — Task_Sensors (prioridade 2)       Core 1 — Task_MQTT (prioridade 1)
 
 ```
 projetos_embarcados/
-├── include/
-│   └── config.h              # Wi-Fi, broker MQTT, GPIOs e thresholds do MPU-6500
-├── src/
-│   └── main.cpp              # Firmware ESP32 — FreeRTOS + MPU-6500 + MQTT
-├── simulation/
-│   └── mock_esp32.py         # Simulador Python: botão de pânico + queda física
-├── dashboard/
-│   ├── app.py                # Backend Flask + Socket.IO + paho-mqtt
-│   ├── requirements.txt      # Dependências Python do dashboard
-│   └── templates/
-│       └── index.html        # Interface web do dashboard
-├── platformio.ini            # Configuração de build do firmware
-└── README.md                 # Este arquivo
+├── esp32-esp8266/
+│   ├── include/
+│   │   ├── config.h              # Wi-Fi, broker MQTT, GPIOs e thresholds do MPU-6500
+│   │   └── CircularBuffer.h      # Buffer circular genérico O(1) sem heap
+│   ├── src/
+│   │   └── main.cpp              # Firmware ESP32 — FreeRTOS + MPU-6500 + MQTT
+│   ├── benchmarks/
+│   │   └── benchmark.cpp         # Benchmark SlidingWindow vs CircularBuffer
+│   └── platformio.ini            # Configuração de build (env:esp32dev + env:benchmark)
+├── applications/
+│   ├── simulation/
+│   │   └── mock_esp32.py         # Simulador Python: botão de pânico + queda física
+│   └── dashboard/
+│       ├── app.py                # Backend Flask + Socket.IO + paho-mqtt
+│       ├── requirements.txt      # Dependências Python do dashboard
+│       └── templates/
+│           └── index.html        # Interface web do dashboard
+├── docs/                         # Relatório PDF, imagens e referências
+├── schematics/                   # Esquemas de ligação (Fritzing / KiCad)
+├── REQ_ALGORITMOS.md             # Requisitos do componente de algoritmos
+├── REQ_EMBARCADOS.md             # Requisitos do componente embarcados
+└── README.md                     # Este arquivo
 ```
 
 ---
@@ -79,7 +88,7 @@ Ideal para desenvolver e testar o dashboard antes de ter o ESP32 em mãos.
 Em um **segundo terminal**:
 
 ```powershell
-cd projetos_embarcados/dashboard
+cd projetos_embarcados/applications/dashboard
 pip install -r requirements.txt
 python app.py
 ```
@@ -91,7 +100,7 @@ Acesse **http://localhost:5000** no navegador.
 Em um **terceiro terminal**:
 
 ```powershell
-cd projetos_embarcados/simulation
+cd projetos_embarcados/applications/simulation
 python mock_esp32.py
 ```
 

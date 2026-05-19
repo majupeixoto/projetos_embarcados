@@ -425,13 +425,23 @@ static bool connectWifi() {
     }
     Serial.println();
 
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("[WiFi] Conectado! IP: %s\n", WiFi.localIP().toString().c_str());
-        return true;
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[WiFi] Falha na conexão.");
+        return false;
     }
 
-    Serial.println("[WiFi] Falha na conexão.");
-    return false;
+    Serial.printf("[WiFi] IPv4: %s\n", WiFi.localIP().toString().c_str());
+
+#if ENABLE_IPV6
+    // Ativa SLAAC (Stateless Address Autoconfiguration) para obter endereço IPv6.
+    // O roteador anuncia o prefixo via Router Advertisement; o ESP32 gera o
+    // sufixo EUI-64 a partir do endereço MAC → endereço global único sem DHCP6.
+    WiFi.enableIPv6();
+    vTaskDelay(pdMS_TO_TICKS(1000));   // aguarda o SO configurar o endereço
+    Serial.printf("[WiFi] IPv6: %s\n", WiFi.localIPv6().toString().c_str());
+#endif
+
+    return true;
 }
 
 static bool connectMQTT() {
