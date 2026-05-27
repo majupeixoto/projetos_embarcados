@@ -41,7 +41,7 @@ def make_event(payload: dict) -> dict:
     now = datetime.now()
     return {
         "status":     payload.get("status", "unknown"),
-        "cause":      payload.get("cause", ""),          # "manual", "fall", "heartbeat"
+        "cause":      payload.get("cause", ""),          # "manual", "fall"
         "accel_g":    payload.get("accel_g", 0.0),       # magnitude do impacto (queda)
         "device_id":  payload.get("device_id", "?"),
         "uptime_ms":  payload.get("uptime_ms", 0),

@@ -63,11 +63,11 @@ projetos_embarcados/
 
 ## Pré-requisitos
 
-| Ferramenta | Finalidade | Instalação |
-|---|---|---|
-| [Mosquitto](https://mosquitto.org/download/) | Broker MQTT local | `winget install EclipseFoundation.Mosquitto` |
-| Python 3.10+ | Dashboard e simulador | python.org |
-| PlatformIO | Compilar e gravar firmware | Extensão VS Code |
+| Ferramenta | Finalidade | Windows | Linux |
+|---|---|---|---|
+| [Mosquitto](https://mosquitto.org/download/) | Broker MQTT local | `winget install EclipseFoundation.Mosquitto` | `sudo apt install mosquitto mosquitto-clients` |
+| Python 3.10+ | Dashboard e simulador | python.org | `sudo apt install python3 python3-pip` |
+| PlatformIO | Compilar e gravar firmware | Extensão VS Code | Extensão VS Code |
 
 ---
 
@@ -77,9 +77,21 @@ Ideal para desenvolver e testar o dashboard antes de ter o ESP32 em mãos.
 
 ### Passo 1 — Iniciar o Broker MQTT
 
+**Windows:**
 ```powershell
 & "C:\Program Files\mosquitto\mosquitto.exe" -v
 ```
+
+**Linux:**
+```bash
+mosquitto -v
+```
+
+> Se o Mosquitto estiver rodando como serviço (instalado via `apt`), pare-o antes para não ter conflito de porta:
+> ```bash
+> sudo systemctl stop mosquitto
+> mosquitto -v
+> ```
 
 > Deixe este terminal aberto. O `-v` ativa logs verbosos para acompanhar as mensagens.
 
@@ -87,10 +99,12 @@ Ideal para desenvolver e testar o dashboard antes de ter o ESP32 em mãos.
 
 Em um **segundo terminal**:
 
-```powershell
+```bash
 cd projetos_embarcados/applications/dashboard
-pip install -r requirements.txt
-python app.py
+pip install -r requirements.txt   # Windows
+pip3 install -r requirements.txt  # Linux
+python app.py    # Windows
+python3 app.py   # Linux
 ```
 
 Acesse **http://localhost:5000** no navegador.
@@ -99,9 +113,10 @@ Acesse **http://localhost:5000** no navegador.
 
 Em um **terceiro terminal**:
 
-```powershell
+```bash
 cd projetos_embarcados/applications/simulation
-python mock_esp32.py
+python mock_esp32.py    # Windows
+python3 mock_esp32.py   # Linux
 ```
 
 ---
@@ -192,12 +207,14 @@ Digite `s` e pressione **ENTER**. O simulador exibe o perfil de aceleração das
 
 ### Modo automático (stress test do dashboard)
 
-```powershell
+```bash
 # Queda aleatória a cada ~30 segundos (jitter de ±20%)
-python mock_esp32.py --auto-fall 30
+python mock_esp32.py --auto-fall 30    # Windows
+python3 mock_esp32.py --auto-fall 30   # Linux
 
 # Combinando com outro broker e device ID
-python mock_esp32.py --broker 192.168.1.100 --device esp32_02 --auto-fall 60
+python mock_esp32.py --broker 192.168.1.100 --device esp32_02 --auto-fall 60    # Windows
+python3 mock_esp32.py --broker 192.168.1.100 --device esp32_02 --auto-fall 60   # Linux
 ```
 
 ### Formato das mensagens MQTT
@@ -234,7 +251,7 @@ python mock_esp32.py --broker 192.168.1.100 --device esp32_02 --auto-fall 60
 >
 > O único pré-requisito é:
 > 1. Configurar `MQTT_BROKER` em `include/config.h` com o IP da máquina onde o Mosquitto está rodando
->    (descubra com `ipconfig | findstr "IPv4"` no Windows)
+>    (descubra com `ipconfig | findstr "IPv4"` no Windows ou `hostname -I` no Linux)
 > 2. Garantir que o ESP32 esteja conectado à **mesma rede Wi-Fi** que a máquina do broker
 >
 > Com isso, o fluxo é idêntico ao da simulação — o dashboard nem precisa saber o IP do ESP32.
@@ -274,7 +291,8 @@ AD0  ──────────────── GND     (define endereço 
 #define WIFI_SSID       "NomeDaSuaRede"    // sua rede Wi-Fi
 #define WIFI_PASSWORD   "SuaSenha"          // sua senha
 #define MQTT_BROKER     "192.168.1.XXX"     // IP da máquina com Mosquitto
-                                            // descubra com: ipconfig | findstr "IPv4"
+                                            // Windows: ipconfig | findstr "IPv4"
+                                            // Linux:   hostname -I
 ```
 
 #### 2. `include/config.h` — se usar outros pinos GPIO
@@ -351,13 +369,18 @@ Os thresholds estão em `include/config.h`. Para ajustá-los com o sensor físic
 
 ### Gravando o Firmware
 
-```powershell
-# Na pasta raiz do projeto
+```bash
+# Na pasta raiz do projeto (Windows e Linux)
 pio run --target upload
 
 # Monitorar logs em tempo real
 pio device monitor --baud 115200
 ```
+
+> **Linux:** se receber `Permission denied` na porta serial, adicione seu usuário ao grupo `dialout` e reinicie a sessão:
+> ```bash
+> sudo usermod -aG dialout $USER
+> ```
 
 Ou pelo VS Code: botão **→ Upload** na barra inferior do PlatformIO.
 
@@ -397,7 +420,7 @@ E se o idoso cancelar dentro dos 15s:
 |---|---|---|
 | Dashboard não abre | Flask não iniciou | Rode `python app.py` e leia o erro |
 | "Broker desconectado" no dashboard | Mosquitto não está rodando | Execute o Passo 1 |
-| Simulador recusa conexão | Mosquitto parado | `& "C:\Program Files\mosquitto\mosquitto.exe" -v` |
+| Simulador recusa conexão | Mosquitto parado | Windows: `& "C:\Program Files\mosquitto\mosquitto.exe" -v` / Linux: `mosquitto -v` |
 | LED fica só azul | Wi-Fi não conecta | Confirme SSID e senha em `config.h` |
 | LED azul mas sem verde | Broker inacessível | Confirme o IP em `MQTT_BROKER` |
 | Botão não dispara alerta | GPIO errado ou fiação | Confira `PIN_BUTTON` e a montagem |
