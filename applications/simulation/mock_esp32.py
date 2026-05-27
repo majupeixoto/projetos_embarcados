@@ -33,8 +33,6 @@ DEFAULT_PORT   = 1883
 DEFAULT_TOPIC  = "elderly/alerts"
 DEFAULT_DEVICE = "esp32_01"
 
-STATUS_INTERVAL = 30   # segundos — igual ao firmware
-
 # ─── Thresholds espelhados do firmware (config.h) ────────────────────────────
 # Mantidos sincronizados com config.h apenas para exibição nos logs.
 FREEFALL_THRESHOLD_G = 0.50
@@ -276,13 +274,6 @@ def simulate_sit_down():
 
 # ─── Threads de suporte ───────────────────────────────────────────────────────
 
-def status_thread(client: mqtt.Client, state: DeviceState):
-    """Status periódico de online — espelha o timer de 30 s do firmware."""
-    while True:
-        time.sleep(STATUS_INTERVAL)
-        if state.connected:
-            _publish_online(client, state)
-
 def auto_fall_thread(client: mqtt.Client, state: DeviceState, interval_s: int):
     """
     Gera quedas automáticas para stress test do dashboard.
@@ -305,7 +296,6 @@ MENU = f"""
   {C.BOLD}f[ENTER]{C.RESET}   → Simular queda completa (4 fases + pré-alerta de 15s)
   {C.BOLD}c[ENTER]{C.RESET}   → Cancelar pré-alerta ativo (simula botão do firmware)
   {C.BOLD}s[ENTER]{C.RESET}   → Simular sentar/abaixar (mostra por que não dispara alarme)
-  {C.BOLD}h[ENTER]{C.RESET}   → Enviar status online manual
   {C.BOLD}q[ENTER]{C.RESET}   → Sair
 """
 
@@ -340,15 +330,11 @@ def command_loop(client: mqtt.Client, state: DeviceState):
             elif cmd == "s":   # simula sentar
                 simulate_sit_down()
 
-            elif cmd == "h":   # heartbeat manual
-                if state.connected:
-                    _publish_online(client, state)
-
             elif cmd == "q":   # sair
                 break
 
             else:
-                print(colored("  Comando desconhecido. Use ENTER, f, c, s, h ou q.", C.GRAY))
+                print(colored("  Comando desconhecido. Use ENTER, f, c, s ou q.", C.GRAY))
 
     except (KeyboardInterrupt, EOFError):
         pass
@@ -396,9 +382,6 @@ def main():
         sys.exit(1)
 
     client.loop_start()
-
-    threading.Thread(target=status_thread, args=(client, state),
-                     daemon=True).start()
 
     if args.auto_fall > 0:
         threading.Thread(target=auto_fall_thread,

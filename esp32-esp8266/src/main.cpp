@@ -477,17 +477,17 @@ static void publishAlert(const AlertEvent_t &ev) {
     }
 }
 
-static void publishHeartbeat() {
+static void publishOnline() {
     StaticJsonDocument<128> doc;
     doc["status"]    = "online";
-    doc["cause"]     = "heartbeat";
+    doc["cause"]     = "online";
     doc["device_id"] = DEVICE_ID;
     doc["uptime_ms"] = (uint32_t)millis();
 
     char buf[128];
     serializeJson(doc, buf);
     mqttClient.publish(MQTT_TOPIC, buf, false);
-    Serial.printf("[MQTT] Heartbeat: %s\n", buf);
+    Serial.printf("[MQTT] Online: %s\n", buf);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -498,7 +498,6 @@ static void publishHeartbeat() {
 
 void Task_MQTT(void *pvParameters) {
     AlertEvent_t ev;
-    TickType_t   lastHeartbeat = 0;
 
     while (true) {
         // ── Garante Wi-Fi ──────────────────────────────────────────────────
@@ -518,7 +517,7 @@ void Task_MQTT(void *pvParameters) {
                 continue;
             }
             setLed(LED_ONLINE);
-            publishHeartbeat();   // anuncia presença ao reconectar
+            publishOnline();   // anuncia presença ao (re)conectar
         }
 
         mqttClient.loop();
@@ -531,13 +530,6 @@ void Task_MQTT(void *pvParameters) {
             publishAlert(ev);
             vTaskDelay(pdMS_TO_TICKS(ALERT_LED_DURATION_MS));
             setLed(LED_ONLINE);
-        }
-
-        // ── Heartbeat periódico ────────────────────────────────────────────
-        TickType_t now = xTaskGetTickCount();
-        if ((now - lastHeartbeat) >= pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS)) {
-            publishHeartbeat();
-            lastHeartbeat = now;
         }
 
         vTaskDelay(pdMS_TO_TICKS(50));

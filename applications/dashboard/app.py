@@ -15,16 +15,18 @@ from flask_socketio import SocketIO
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-MQTT_BROKER = "localhost"
-MQTT_PORT   = 1883
-MQTT_TOPIC  = "elderly/alerts"
+MQTT_BROKER         = "localhost"
+MQTT_PORT           = 1883
+MQTT_TOPIC_ALERTS   = "elderly/alerts"
+MQTT_TOPIC_SAMPLES  = "elderly/samples"
 
 app      = Flask(__name__)
 app.config["SECRET_KEY"] = "vitalink_2025"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# Circular buffer thread-safe (últimos 100 eventos)
-events: deque[dict] = deque(maxlen=100)
+# Buffers thread-safe
+events:  deque[dict] = deque(maxlen=100)   # alertas / online / offline
+samples: deque[dict] = deque(maxlen=500)   # telemetria do benchmark
 broker_connected = False
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -57,8 +59,9 @@ def on_connect(client, userdata, flags, rc, properties=None):
     global broker_connected
     if rc == 0:
         broker_connected = True
-        client.subscribe(MQTT_TOPIC, qos=1)
-        print(f"[MQTT] Conectado → subscrito em '{MQTT_TOPIC}'")
+        client.subscribe(MQTT_TOPIC_ALERTS,  qos=1)
+        client.subscribe(MQTT_TOPIC_SAMPLES, qos=0)
+        print(f"[MQTT] Conectado → '{MQTT_TOPIC_ALERTS}' + '{MQTT_TOPIC_SAMPLES}'")
         socketio.emit("broker_status", {"connected": True})
     else:
         print(f"[MQTT] Falha na conexão (rc={rc})")
@@ -71,19 +74,36 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=No
 
 def on_message(client, userdata, msg):
     try:
-        raw   = json.loads(msg.payload.decode())
-        event = make_event(raw)
-        events.appendleft(event)
-        socketio.emit("mqtt_event", event)
-        print(f"[MQTT] {event['time_str']} [{event['status'].upper()}] {event['device_id']}")
+        raw = json.loads(msg.payload.decode())
+        if msg.topic == MQTT_TOPIC_SAMPLES:
+            _handle_sample(raw)
+        else:
+            _handle_event(raw)
     except Exception as exc:
         print(f"[MQTT] Erro ao processar mensagem: {exc}")
+
+def _handle_event(raw: dict):
+    event = make_event(raw)
+    events.appendleft(event)
+    socketio.emit("mqtt_event", event)
+    print(f"[MQTT] {event['time_str']} [{event['status'].upper()}] {event['device_id']}")
+
+def _handle_sample(raw: dict):
+    sample = {
+        "seq":      raw.get("seq",      0),
+        "value":    round(float(raw.get("value", 0.0)), 2),
+        "buf_size": int(raw.get("buf_size", 0)),
+        "buf_cap":  int(raw.get("buf_cap",  512)),
+        "produced": int(raw.get("produced", 0)),
+    }
+    samples.appendleft(sample)
+    socketio.emit("telemetry_sample", sample)
 
 # ─── MQTT worker (thread separada com reconexão) ──────────────────────────────
 
 def mqtt_worker():
     client = mqtt.Client(
-        client_id            = "vitalink_dashboard",
+        client_id            = "vitalink_dashboard_01",
         callback_api_version = mqtt.CallbackAPIVersion.VERSION2,
     )
     client.on_connect    = on_connect
@@ -115,17 +135,26 @@ def index():
         broker_host    = MQTT_BROKER,
         broker_port    = MQTT_PORT,
         broker_ok      = broker_connected,
+        telem_count    = len(samples),
     )
 
 @app.route("/api/events")
 def api_events():
     return {"events": list(events)[:50]}
 
+@app.route("/api/samples")
+def api_samples():
+    return {"samples": list(samples)[:100]}
+
 # ─── Socket.IO ────────────────────────────────────────────────────────────────
 
 @socketio.on("connect")
 def handle_connect():
     socketio.emit("broker_status", {"connected": broker_connected})
+    # Hidrata o gráfico com as últimas amostras já recebidas
+    if samples:
+        history = list(reversed(list(samples)[:100]))
+        socketio.emit("telem_history", history)
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 

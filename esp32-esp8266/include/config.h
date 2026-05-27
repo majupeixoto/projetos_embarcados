@@ -62,6 +62,5 @@
 #define DEBOUNCE_MS             50
 #define MQTT_RECONNECT_DELAY_MS 5000
 #define WIFI_RECONNECT_DELAY_MS 10000
-#define HEARTBEAT_INTERVAL_MS   30000
 #define ALERT_LED_DURATION_MS   3000
 #define PRE_ALERT_BLINK_MS      500    // ms — período do piscar amarelo no pré-alerta

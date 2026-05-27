@@ -7,6 +7,7 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
@@ -325,6 +326,65 @@
       </div>
 
     </div>
+    <!-- ── TELEMETRIA ────────────────────────────────────────────────── -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 class="font-semibold text-slate-800 text-sm">Telemetria em Tempo Real</h3>
+          <p class="text-[11px] text-slate-400">Amostras do sensor via MQTT · tópico <span class="mono">elderly/samples</span> · Vertente 2 — Buffer Circular O(1)</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div id="telem-live"
+               class="hidden items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full">
+            <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span> RECEBENDO
+          </div>
+          <span class="text-[11px] text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full mono">
+            <span id="telem-count">{{ telem_count }}</span> amostras
+          </span>
+        </div>
+      </div>
+
+      <!-- Gráfico -->
+      <div class="px-6 pt-5 pb-2">
+        <canvas id="telemChart" height="90"></canvas>
+      </div>
+
+      <!-- Stats de buffer -->
+      <div class="px-6 pb-5 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+
+        <div class="bg-slate-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Produzidas</p>
+          <p id="telem-produced" class="mono text-lg font-bold text-slate-800">—</p>
+          <p class="text-[10px] text-slate-400 mt-0.5">pelo sensor</p>
+        </div>
+
+        <div class="bg-blue-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-blue-500 uppercase tracking-wider mb-1">Publicadas MQTT</p>
+          <p id="telem-consumed" class="mono text-lg font-bold text-blue-700">—</p>
+          <p class="text-[10px] text-blue-400 mt-0.5">pelo consumidor</p>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Buffer</p>
+          <p id="telem-buf" class="mono text-lg font-bold text-slate-800">— / 512</p>
+          <p class="text-[10px] text-slate-400 mt-0.5">slots ocupados</p>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl p-3.5">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Ocupação</p>
+          <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div id="telem-bar"
+                 class="h-full rounded-full transition-all duration-300 bg-blue-500"
+                 style="width:0%"></div>
+          </div>
+          <p id="telem-pct" class="mono text-xs font-semibold text-slate-600 mt-1.5 text-right">0%</p>
+        </div>
+
+      </div>
+    </div>
+
   </div><!-- end scrollable content -->
 </main>
 
@@ -576,6 +636,94 @@ function setBroker(ok) {
   }
 }
 
+// ── Telemetria — Chart.js ──────────────────────────────────────────────────
+const TELEM_WINDOW = 120;
+const telemLabels  = [];
+const telemValues  = [];
+let   telemTotal   = {{ telem_count }};
+
+const telemChart = new Chart(
+  document.getElementById('telemChart').getContext('2d'),
+  {
+    type: 'line',
+    data: {
+      labels:   telemLabels,
+      datasets: [{
+        data:            telemValues,
+        borderColor:     '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.07)',
+        fill:            true,
+        tension:         0.35,
+        pointRadius:     0,
+        borderWidth:     1.8,
+      }],
+    },
+    options: {
+      animation:   false,
+      responsive:  true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend:  { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toFixed(2)} u.a.`,
+            title: ctx => `seq #${ctx[0].label}`,
+          },
+          backgroundColor: '#1e293b',
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          padding: 8,
+        },
+      },
+      scales: {
+        x: { display: false },
+        y: {
+          grid:   { color: 'rgba(148,163,184,0.15)' },
+          border: { display: false },
+          ticks:  {
+            font:  { family: 'JetBrains Mono', size: 9 },
+            color: '#94a3b8',
+            maxTicksLimit: 4,
+          },
+        },
+      },
+    },
+  }
+);
+
+function telemPush(d) {
+  telemLabels.push(d.seq);
+  telemValues.push(d.value);
+  if (telemLabels.length > TELEM_WINDOW) {
+    telemLabels.shift();
+    telemValues.shift();
+  }
+  telemChart.update('none');
+
+  telemTotal++;
+  document.getElementById('telem-count').textContent    = telemTotal;
+  document.getElementById('telem-produced').textContent = d.produced ?? '—';
+  document.getElementById('telem-consumed').textContent = d.seq + 1;
+
+  const bufSize = d.buf_size ?? 0;
+  const bufCap  = d.buf_cap  ?? 512;
+  document.getElementById('telem-buf').textContent = `${bufSize} / ${bufCap}`;
+
+  const pct = bufCap > 0 ? Math.round(bufSize / bufCap * 100) : 0;
+  const bar  = document.getElementById('telem-bar');
+  bar.style.width = pct + '%';
+  bar.className   = `h-full rounded-full transition-all duration-300 ${
+    pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-amber-500' : 'bg-blue-500'
+  }`;
+  document.getElementById('telem-pct').textContent = pct + '%';
+
+  // Badge "RECEBENDO" some após 3 s de inatividade
+  const badge = document.getElementById('telem-live');
+  badge.classList.replace('hidden', 'flex');
+  clearTimeout(badge._tid);
+  badge._tid = setTimeout(() => badge.classList.replace('flex', 'hidden'), 3000);
+}
+
 // ── Socket.IO ──────────────────────────────────────────────────────────────
 const socket = io();
 
@@ -583,6 +731,24 @@ socket.on('connect',    () => setBroker(true));
 socket.on('disconnect', () => setBroker(false));
 
 socket.on('broker_status', (d) => setBroker(d.connected));
+
+// Hidrata o gráfico com histórico ao (re)conectar
+socket.on('telem_history', (history) => {
+  telemLabels.length = 0;
+  telemValues.length = 0;
+  history.slice(-TELEM_WINDOW).forEach(d => {
+    telemLabels.push(d.seq);
+    telemValues.push(d.value);
+  });
+  telemChart.update('none');
+  if (history.length) {
+    const last = history[history.length - 1];
+    document.getElementById('telem-produced').textContent = last.produced ?? '—';
+    document.getElementById('telem-consumed').textContent = last.seq + 1;
+  }
+});
+
+socket.on('telemetry_sample', telemPush);
 
 socket.on('mqtt_event', (ev) => {
   applyStatus(ev);
