@@ -7,6 +7,7 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
@@ -16,9 +17,6 @@
 
     /* Sidebar */
     .sidebar { background: linear-gradient(175deg, #0f172a 0%, #1a3254 100%); }
-    .nav-item { transition: all .2s ease; border-left: 3px solid transparent; }
-    .nav-item:hover { background: rgba(255,255,255,.07); }
-    .nav-item.active { background: rgba(59,130,246,.2); border-left-color: #3b82f6; }
 
     /* Status ring */
     .ring-transition { transition: background .5s ease, box-shadow .5s ease; }
@@ -37,10 +35,6 @@
       animation: sonar 1.4s ease-out infinite;
     }
     .sonar::after { animation-delay: .5s; background: rgba(239,68,68,.2); }
-
-    /* Heartbeat icon */
-    @keyframes beat { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-    .beat { animation: beat 1.8s ease-in-out infinite; }
 
     /* Slide-in for new event rows */
     @keyframes slidein {
@@ -71,7 +65,7 @@
   <div class="px-6 py-5 border-b border-white/10">
     <div class="flex items-center gap-3">
       <div class="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center shadow-lg shadow-blue-900/40">
-        <i class="fas fa-heartbeat text-white text-lg beat"></i>
+        <i class="fas fa-shield-halved text-white text-lg"></i>
       </div>
       <div>
         <p class="text-lg font-bold tracking-tight leading-none">VitaLink</p>
@@ -80,31 +74,7 @@
     </div>
   </div>
 
-  <!-- Nav -->
-  <nav class="flex-1 px-3 py-5 space-y-0.5">
-    <p class="text-[10px] text-slate-500 uppercase tracking-widest px-3 mb-2">Principal</p>
-
-    <a href="#" class="nav-item active flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium">
-      <i class="fas fa-chart-line w-4 text-center text-blue-400"></i> Dashboard
-    </a>
-    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
-      <i class="fas fa-watch w-4 text-center"></i> Dispositivos
-    </a>
-    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
-      <i class="fas fa-clock-rotate-left w-4 text-center"></i> Histórico
-    </a>
-
-    <p class="text-[10px] text-slate-500 uppercase tracking-widest px-3 mt-5 mb-2">Gestão</p>
-    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
-      <i class="fas fa-users w-4 text-center"></i> Cuidadores
-    </a>
-    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
-      <i class="fas fa-bell w-4 text-center"></i> Notificações
-    </a>
-    <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400">
-      <i class="fas fa-gear w-4 text-center"></i> Configurações
-    </a>
-  </nav>
+  <div class="flex-1"></div>
 
   <!-- Broker status pill -->
   <div class="px-4 pb-5">
@@ -271,7 +241,7 @@
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-slate-700">
                   {% if e.status == 'alert' %}Botão de Pânico
-                  {% elif e.status == 'online' %}Online / Heartbeat
+                  {% elif e.status == 'online' %}Online
                   {% else %}Offline{% endif %}
                 </p>
                 <p class="text-[11px] text-slate-400 mono">{{ e.device_id }} · uptime {{ e.uptime_str }}</p>
@@ -356,6 +326,65 @@
       </div>
 
     </div>
+    <!-- ── TELEMETRIA ────────────────────────────────────────────────── -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 class="font-semibold text-slate-800 text-sm">Telemetria em Tempo Real</h3>
+          <p class="text-[11px] text-slate-400">Amostras do sensor via MQTT · tópico <span class="mono">elderly/samples</span> · Vertente 2 — Buffer Circular O(1)</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div id="telem-live"
+               class="hidden items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full">
+            <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span> RECEBENDO
+          </div>
+          <span class="text-[11px] text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full mono">
+            <span id="telem-count">{{ telem_count }}</span> amostras
+          </span>
+        </div>
+      </div>
+
+      <!-- Gráfico -->
+      <div class="px-6 pt-5 pb-2">
+        <canvas id="telemChart" height="90"></canvas>
+      </div>
+
+      <!-- Stats de buffer -->
+      <div class="px-6 pb-5 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+
+        <div class="bg-slate-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Produzidas</p>
+          <p id="telem-produced" class="mono text-lg font-bold text-slate-800">—</p>
+          <p class="text-[10px] text-slate-400 mt-0.5">pelo sensor</p>
+        </div>
+
+        <div class="bg-blue-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-blue-500 uppercase tracking-wider mb-1">Publicadas MQTT</p>
+          <p id="telem-consumed" class="mono text-lg font-bold text-blue-700">—</p>
+          <p class="text-[10px] text-blue-400 mt-0.5">pelo consumidor</p>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Buffer</p>
+          <p id="telem-buf" class="mono text-lg font-bold text-slate-800">— / 512</p>
+          <p class="text-[10px] text-slate-400 mt-0.5">slots ocupados</p>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl p-3.5">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Ocupação</p>
+          <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div id="telem-bar"
+                 class="h-full rounded-full transition-all duration-300 bg-blue-500"
+                 style="width:0%"></div>
+          </div>
+          <p id="telem-pct" class="mono text-xs font-semibold text-slate-600 mt-1.5 text-right">0%</p>
+        </div>
+
+      </div>
+    </div>
+
   </div><!-- end scrollable content -->
 </main>
 
@@ -406,16 +435,38 @@ const CFG = {
     cardBg:    'bg-white border-slate-200',
     badge:     { text:'Online',  cls:'bg-emerald-100 text-emerald-700' },
   },
+  pre_alert: {
+    ringBg:    'bg-amber-50',
+    shadow:    'shadow-[0_0_0_8px_rgba(245,158,11,0.2)]',
+    icon:      'fa-triangle-exclamation',
+    iconColor: 'text-amber-500',
+    label:     'PRÉ-ALERTA',
+    labelCls:  'text-amber-600',
+    desc:      '⚠️ Possível queda detectada — janela de cancelamento ativa (15s). Aguardando confirmação.',
+    cardBg:    'bg-amber-50 border-amber-300',
+    badge:     { text:'Pré-Alerta', cls:'bg-amber-100 text-amber-700' },
+  },
   alert: {
     ringBg:    'bg-red-50 sonar',
     shadow:    'shadow-[0_0_0_8px_rgba(239,68,68,0.15)]',
-    icon:      'fa-triangle-exclamation',
+    icon:      'fa-bell',
     iconColor: 'text-red-500',
     label:     'ALERTA!',
     labelCls:  'text-red-600',
     desc:      '🚨 Botão de pânico acionado! Verifique imediatamente o estado do idoso.',
     cardBg:    'bg-red-50 border-red-300',
-    badge:     { text:'⚠ Alerta', cls:'bg-red-100 text-red-700' },
+    badge:     { text:'⚠ Pânico', cls:'bg-red-100 text-red-700' },
+  },
+  alert_fall: {
+    ringBg:    'bg-red-50 sonar',
+    shadow:    'shadow-[0_0_0_8px_rgba(239,68,68,0.15)]',
+    icon:      'fa-person-falling',
+    iconColor: 'text-red-500',
+    label:     'ALERTA!',
+    labelCls:  'text-red-600',
+    desc:      '🚨 Queda confirmada! Idoso pode estar no chão — verifique imediatamente.',
+    cardBg:    'bg-red-50 border-red-300',
+    badge:     { text:'⚠ Queda', cls:'bg-red-100 text-red-700' },
   },
   offline: {
     ringBg:    'bg-slate-100',
@@ -442,7 +493,9 @@ function flash(el) {
 
 // ── Apply status to hero card ──────────────────────────────────────────────
 function applyStatus(ev) {
-  const cfg = CFG[ev.status] || CFG.offline;
+  let key = ev.status;
+  if (ev.status === 'alert' && ev.cause === 'fall') key = 'alert_fall';
+  const cfg = CFG[key] || CFG.offline;
 
   // Ring
   const ring = document.getElementById('status-ring');
@@ -486,13 +539,21 @@ function applyStatus(ev) {
 
 // Resolve label e estilo a partir do status + cause do evento
 function resolveRowCfg(ev) {
+  if (ev.status === 'pre_alert') {
+    return {
+      dot:   'bg-amber-500',
+      icon:  'fa-triangle-exclamation text-amber-400',
+      badge: 'bg-amber-100 text-amber-700',
+      label: 'Pré-Alerta (queda?)',
+    };
+  }
   if (ev.status === 'alert') {
     if (ev.cause === 'fall') {
       return {
-        dot:   'bg-orange-500',
-        icon:  'fa-person-falling text-orange-400',
-        badge: 'bg-orange-100 text-orange-700',
-        label: 'Queda Detectada',
+        dot:   'bg-red-500',
+        icon:  'fa-person-falling text-red-400',
+        badge: 'bg-red-100 text-red-700',
+        label: 'Queda Confirmada',
       };
     }
     return {
@@ -507,7 +568,7 @@ function resolveRowCfg(ev) {
       dot:   'bg-emerald-500',
       icon:  'fa-circle-check text-emerald-400',
       badge: 'bg-emerald-100 text-emerald-700',
-      label: 'Online / Heartbeat',
+      label: 'Online',
     };
   }
   return {
@@ -575,6 +636,94 @@ function setBroker(ok) {
   }
 }
 
+// ── Telemetria — Chart.js ──────────────────────────────────────────────────
+const TELEM_WINDOW = 120;
+const telemLabels  = [];
+const telemValues  = [];
+let   telemTotal   = {{ telem_count }};
+
+const telemChart = new Chart(
+  document.getElementById('telemChart').getContext('2d'),
+  {
+    type: 'line',
+    data: {
+      labels:   telemLabels,
+      datasets: [{
+        data:            telemValues,
+        borderColor:     '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.07)',
+        fill:            true,
+        tension:         0.35,
+        pointRadius:     0,
+        borderWidth:     1.8,
+      }],
+    },
+    options: {
+      animation:   false,
+      responsive:  true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend:  { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toFixed(2)} u.a.`,
+            title: ctx => `seq #${ctx[0].label}`,
+          },
+          backgroundColor: '#1e293b',
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          padding: 8,
+        },
+      },
+      scales: {
+        x: { display: false },
+        y: {
+          grid:   { color: 'rgba(148,163,184,0.15)' },
+          border: { display: false },
+          ticks:  {
+            font:  { family: 'JetBrains Mono', size: 9 },
+            color: '#94a3b8',
+            maxTicksLimit: 4,
+          },
+        },
+      },
+    },
+  }
+);
+
+function telemPush(d) {
+  telemLabels.push(d.seq);
+  telemValues.push(d.value);
+  if (telemLabels.length > TELEM_WINDOW) {
+    telemLabels.shift();
+    telemValues.shift();
+  }
+  telemChart.update('none');
+
+  telemTotal++;
+  document.getElementById('telem-count').textContent    = telemTotal;
+  document.getElementById('telem-produced').textContent = d.produced ?? '—';
+  document.getElementById('telem-consumed').textContent = d.seq + 1;
+
+  const bufSize = d.buf_size ?? 0;
+  const bufCap  = d.buf_cap  ?? 512;
+  document.getElementById('telem-buf').textContent = `${bufSize} / ${bufCap}`;
+
+  const pct = bufCap > 0 ? Math.round(bufSize / bufCap * 100) : 0;
+  const bar  = document.getElementById('telem-bar');
+  bar.style.width = pct + '%';
+  bar.className   = `h-full rounded-full transition-all duration-300 ${
+    pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-amber-500' : 'bg-blue-500'
+  }`;
+  document.getElementById('telem-pct').textContent = pct + '%';
+
+  // Badge "RECEBENDO" some após 3 s de inatividade
+  const badge = document.getElementById('telem-live');
+  badge.classList.replace('hidden', 'flex');
+  clearTimeout(badge._tid);
+  badge._tid = setTimeout(() => badge.classList.replace('flex', 'hidden'), 3000);
+}
+
 // ── Socket.IO ──────────────────────────────────────────────────────────────
 const socket = io();
 
@@ -582,6 +731,24 @@ socket.on('connect',    () => setBroker(true));
 socket.on('disconnect', () => setBroker(false));
 
 socket.on('broker_status', (d) => setBroker(d.connected));
+
+// Hidrata o gráfico com histórico ao (re)conectar
+socket.on('telem_history', (history) => {
+  telemLabels.length = 0;
+  telemValues.length = 0;
+  history.slice(-TELEM_WINDOW).forEach(d => {
+    telemLabels.push(d.seq);
+    telemValues.push(d.value);
+  });
+  telemChart.update('none');
+  if (history.length) {
+    const last = history[history.length - 1];
+    document.getElementById('telem-produced').textContent = last.produced ?? '—';
+    document.getElementById('telem-consumed').textContent = last.seq + 1;
+  }
+});
+
+socket.on('telemetry_sample', telemPush);
 
 socket.on('mqtt_event', (ev) => {
   applyStatus(ev);
@@ -592,6 +759,8 @@ socket.on('mqtt_event', (ev) => {
     const sa = document.getElementById('stat-alerts');
     sa.textContent = alertsCount;
     flash(sa);
+    playAlert();
+  } else if (ev.status === 'pre_alert') {
     playAlert();
   }
 });

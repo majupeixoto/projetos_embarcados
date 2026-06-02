@@ -67,12 +67,17 @@ Independente de N, `push()` e `pop()` sempre executam:
 
 ```
 projetos_embarcados/
-├── include/
-│   └── CircularBuffer.h      ← Classe template — pode ser usada em qualquer projeto
-├── benchmarks/
-│   ├── benchmark.cpp         ← main() do benchmark (substitui src/main.cpp)
-│   └── GUIA_BENCHMARK.md     ← este arquivo
-└── platformio.ini            ← já tem o ambiente [env:benchmark] configurado
+├── esp32-esp8266/
+│   ├── include/
+│   │   ├── CircularBuffer.h   ← Classe template — pode ser usada em qualquer projeto
+│   │   └── config.h           ← Credenciais Wi-Fi, IP do broker, GPIOs
+│   ├── benchmarks/
+│   │   ├── benchmark.cpp      ← main() do benchmark (substitui src/main.cpp)
+│   │   └── GUIA_BENCHMARK.md  ← este arquivo
+│   └── platformio.ini         ← ambientes esp32dev e benchmark configurados
+└── applications/
+    └── dashboard/
+        └── app.py             ← dashboard Flask+Socket.IO (exibe gráfico ao vivo)
 ```
 
 ---
@@ -83,11 +88,28 @@ projetos_embarcados/
 
 - VS Code com a extensão **PlatformIO** instalada
 - ESP32 conectado via USB
-- Monitor serial aberto em **115200 baud**
+- **Broker MQTT** rodando no PC (Mosquitto)
+- **Rede Wi-Fi** acessível ao ESP32 e ao PC
+- Python 3 com dependências do dashboard (`pip install flask flask-socketio paho-mqtt`)
 
 ---
 
-### Passo 1 — Verificar o ambiente no `platformio.ini`
+### Passo 1 — Configurar credenciais em `config.h`
+
+Abra [include/config.h](../include/config.h) e preencha:
+
+```cpp
+#define WIFI_SSID      "nome_da_sua_rede"
+#define WIFI_PASSWORD  "senha_da_sua_rede"
+#define MQTT_BROKER    "192.168.x.x"   // IP do seu PC na rede local
+                                        // Linux: ip a  |  Windows: ipconfig
+```
+
+> **Por que o IP do PC?** O benchmark publica amostras no broker Mosquitto que roda no seu computador. O ESP32 precisa do endereço IP para alcançá-lo na rede local.
+
+---
+
+### Passo 2 — Verificar o ambiente no `platformio.ini`
 
 Abra [platformio.ini](../platformio.ini) e confirme que o bloco abaixo existe:
 
@@ -97,33 +119,44 @@ platform    = espressif32
 board       = esp32dev
 framework   = arduino
 build_src_filter = -<src/> +<benchmarks/>
-monitor_speed    = 115200
+lib_deps    =
+    knolleary/PubSubClient @ ^2.8
+    bblanchon/ArduinoJson  @ ^7.0
+monitor_speed   = 115200
 ```
 
-A linha `build_src_filter` é o que faz o compilador usar `benchmarks/benchmark.cpp` **em vez de** `src/main.cpp` (firmware VitaLink). Os dois projetos coexistem sem conflito.
+A linha `build_src_filter` faz o compilador usar `benchmarks/benchmark.cpp` **em vez de** `src/main.cpp`. As `lib_deps` são necessárias para MQTT e JSON reais.
 
 ---
 
-### Passo 2 — Compilar e gravar o benchmark
+### Passo 3 — Iniciar broker e dashboard no PC
 
-Abra o terminal integrado do VS Code (`Ctrl + '`) e execute:
+Abra dois terminais no PC **antes** de gravar o ESP32:
 
-```powershell
-# Compila e grava usando o ambiente benchmark
-pio run -e benchmark --target upload
+```bash
+# Terminal 1 — broker MQTT
+mosquitto -v
+
+# Terminal 2 — dashboard
+cd applications/dashboard
+python app.py
+# Acesse http://localhost:5000
 ```
 
-> Se preferir a interface gráfica: na barra inferior do PlatformIO, selecione o ambiente **benchmark** antes de clicar em Upload.
+Deixe os dois rodando durante todo o benchmark.
 
 ---
 
-### Passo 3 — Abrir o monitor serial
+### Passo 4 — Compilar, gravar e monitorar o benchmark
 
-```powershell
-pio device monitor -e benchmark
+```bash
+# Compila, grava e abre o monitor serial
+pio run -e benchmark --target upload && pio device monitor -e benchmark
 ```
 
-Aguarde ~1,5 segundo para a inicialização. A saída começa assim:
+> Se preferir a interface gráfica: selecione o ambiente **benchmark** na barra do PlatformIO antes de clicar em Upload.
+
+A saída começa com a conexão de rede e depois entra nos benchmarks:
 
 ```
 ╔════════════════════════════════════════════════════════╗
@@ -132,13 +165,21 @@ Aguarde ~1,5 segundo para a inicialização. A saída começa assim:
 ║  TIPO;VERT;N;LAT_MEDIA_US;HEAP_LIVRE_B;HEAP_DELTA_B  ║
 ╚════════════════════════════════════════════════════════╝
   Heap inicial: 298432 bytes livres
+
+[WiFi] Conectando a "sua_rede"...........
+[WiFi] IP: 192.168.1.42
+[MQTT] Conectado → publicando em 'elderly/samples'
 ```
+
+Se o Wi-Fi ou o broker não estiverem acessíveis, o benchmark **ainda roda** — apenas a publicação MQTT fica desativada e o campo `desc` contabiliza as amostras não enviadas.
 
 ---
 
-### Passo 4 — Entender as três seções da saída
+### Passo 5 — Entender as três seções da saída serial
 
 #### Seção A — Demo do gargalo síncrono (Vertente 1)
+
+Executada **antes** das tasks FreeRTOS. Simula envio bloqueante com `delay(80ms)`:
 
 ```
 # ── DEMO V1: envio síncrono bloqueante ─────────────────
@@ -151,7 +192,7 @@ DEMO_V1;2; 19.87;82;80
 
 Leitura: `DEMO_V1 ; nº_amostra ; valor ; tempo_real_ms ; jitter_ms`
 
-O `jitter_ms` de 80 ms mostra que o sensor não consegue amostrar a 500 Hz — fica travado esperando a rede a cada ciclo.
+O `jitter_ms` de ~80 ms mostra que o sensor não consegue amostrar a 500 Hz — fica travado esperando a rede a cada ciclo.
 
 ---
 
@@ -167,19 +208,19 @@ BENCHMARK;V1;20000;720;218432;80000
 BENCHMARK;V2;20000; 1;298432;0
 ```
 
-| Coluna            | O que significa                                              |
-|-------------------|--------------------------------------------------------------|
-| `LAT_MEDIA_US`    | Tempo médio por inserção em microssegundos                   |
-| `HEAP_LIVRE_BYTES`| Heap disponível após a alocação do buffer V1                 |
-| `HEAP_DELTA_BYTES`| Bytes consumidos do heap (V2 deve sempre ser **0**)          |
+| Coluna             | O que significa                                             |
+|--------------------|-------------------------------------------------------------|
+| `LAT_MEDIA_US`     | Tempo médio por inserção em microssegundos                  |
+| `HEAP_LIVRE_BYTES` | Heap disponível após a alocação do buffer V1                |
+| `HEAP_DELTA_BYTES` | Bytes consumidos do heap (V2 deve sempre ser **0**)         |
 
-**Como plotar:** copie essas linhas no Excel ou Google Sheets, use "Dados → Texto para Colunas" com separador `;`, depois crie um gráfico de barras com N no eixo X e `LAT_MEDIA_US` no eixo Y, uma série para cada vertente.
+**Como plotar:** copie as linhas no Excel ou Google Sheets, use "Dados → Texto para Colunas" com separador `;`, crie um gráfico de barras com N no eixo X e `LAT_MEDIA_US` no eixo Y, uma série por vertente.
 
 ---
 
-#### Seção C — Demo FreeRTOS Produtor–Consumidor (Vertente 2)
+#### Seção C — Demo FreeRTOS Produtor–Consumidor com MQTT real (Vertente 2)
 
-Após os benchmarks, as Tasks iniciam e o monitor exibe:
+Após os benchmarks estáticos, as tasks FreeRTOS iniciam. O `Task_Consumidor` publica **amostras reais** no broker via `elderly/samples`. O `Task_Network` mantém a conexão MQTT viva em paralelo.
 
 ```
 MQTT_SEND;100;  0.84;buf=40/512;prod=2003;desc=0
@@ -187,20 +228,35 @@ MQTT_SEND;200; -0.84;buf=38/512;prod=4007;desc=0
 STATUS;heap=298100;prod=5012;cons=250;desc=0;buf_ocup=42/512
 ```
 
-| Linha         | Significado                                                  |
-|---------------|--------------------------------------------------------------|
-| `MQTT_SEND`   | A cada 100 amostras consumidas: nº, valor, ocupação do buffer|
-| `STATUS`      | A cada 5 s: saúde geral — heap, produzidas, consumidas, descartadas |
+| Campo     | Significado                                                        |
+|-----------|--------------------------------------------------------------------|
+| `MQTT_SEND` | A cada 100 amostras publicadas: nº, valor, ocupação do buffer    |
+| `STATUS`  | A cada 5 s: heap livre, produzidas, consumidas, descartadas        |
+| `desc=0`  | Nenhuma amostra perdida — buffer absorveu a latência de rede       |
 
-O campo `desc=0` confirma que o Produtor (500 Hz) **não perdeu nenhuma amostra** mesmo com o Consumidor bloqueado por 80 ms a cada envio.
+O Produtor (500 Hz) **nunca para** mesmo com o Consumidor bloqueado pelo round-trip MQTT.
 
 ---
 
-### Passo 5 — Voltar ao firmware VitaLink
+### Passo 6 — Observar o gráfico no dashboard
 
-Basta selecionar o ambiente `esp32dev` e gravar normalmente. O benchmark não altera nada no `src/main.cpp`.
+Enquanto a Seção C roda, abra **http://localhost:5000** no browser. O painel **Telemetria em Tempo Real** exibe:
 
-```powershell
+- **Gráfico de linha** com as últimas 120 amostras da onda senoidal chegando via MQTT
+- **Produzidas** — total gerado pelo sensor (Task_Produtor)
+- **Publicadas MQTT** — total enviado pelo consumidor (Task_Consumidor)
+- **Buffer** — slots ocupados no CircularBuffer no momento da publicação
+- **Barra de ocupação** — muda de azul → âmbar → vermelho conforme o buffer enche
+
+Isso demonstra visualmente o padrão Produtor–Consumidor: o gráfico continua se atualizando mesmo nos momentos em que o Consumidor está bloqueado pelo round-trip de rede.
+
+---
+
+### Passo 7 — Voltar ao firmware VitaLink
+
+O benchmark não altera nada no `src/main.cpp`. Basta selecionar o ambiente `esp32dev` e gravar:
+
+```bash
 pio run -e esp32dev --target upload
 ```
 
@@ -289,8 +345,12 @@ if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
 
 | Sintoma | Causa provável | Solução |
 |---|---|---|
-| `ERRO_HEAP_INSUFICIENTE` na linha V1 | Heap < N * 4 bytes | Execute os cenários menores primeiro; reinicie o ESP32 antes do N=20000 |
+| `ERRO_HEAP_INSUFICIENTE` na linha V1 | Heap < N × 4 bytes | Execute os cenários menores primeiro; reinicie o ESP32 antes do N=20.000 |
 | Monitor serial vazio | Baud rate errado | Confirme 115200 no monitor |
-| Ambiente `benchmark` não aparece | `platformio.ini` não salvo | Salve o arquivo e aguarde o PlatformIO reindexar (~5 s) |
-| `desc` crescendo no STATUS | Buffer cheio (Consumidor lento) | Aumente `CAP` em `g_demoBuf` ou reduza `MQTT_LATENCY_MS` |
+| Ambiente `benchmark` não aparece na IDE | `platformio.ini` não salvo | Salve o arquivo e aguarde o PlatformIO reindexar (~5 s) |
+| `[WiFi] Sem conexão` no serial | SSID/senha errados ou rede fora de alcance | Confira `config.h`; aproxime o ESP32 do roteador |
+| `[MQTT] Falha (rc=-2)` | Broker não está rodando ou IP errado | Inicie `mosquitto -v`; verifique `MQTT_BROKER` em `config.h` com `ip a` / `ipconfig` |
+| Gráfico do dashboard vazio | Broker não assinado ou dashboard não iniciado | Confirme que `python app.py` está rodando e que o broker está acessível |
+| `desc` crescendo no STATUS | Publicações MQTT falhando (rede instável) | Verifique a estabilidade do Wi-Fi; `desc=0` é o comportamento esperado |
 | Upload falha com `esp32dev` selecionado | Ambiente errado | Selecione `benchmark` antes de gravar |
+| Conflito de `client_id` MQTT | Dashboard e benchmark usam IDs diferentes por padrão | Sem ação necessária — benchmark usa sufixo `-bench` automaticamente |

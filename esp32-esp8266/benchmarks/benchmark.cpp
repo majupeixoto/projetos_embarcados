@@ -42,10 +42,26 @@
 #include <Arduino.h>
 #include <cstring>                  // memmove
 #include <cmath>                    // sinf
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "CircularBuffer.h"
+#include "config.h"
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MQTT — CLIENTE COMPARTILHADO ENTRE TASKS
+// Protegido por g_mqttMutex para acesso concorrente de Task_Consumidor e
+// Task_Network. g_mqttReady indica que a conexão está estabelecida.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static WiFiClient        g_wifiClient;
+static PubSubClient      g_mqttClient(g_wifiClient);
+static SemaphoreHandle_t g_mqttMutex   = nullptr;
+static volatile bool     g_mqttReady   = false;
+static const char* const SAMPLES_TOPIC = "elderly/samples";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PARÂMETROS DO BENCHMARK
@@ -402,6 +418,43 @@ static void Task_Produtor(void* pv) {
 // Complexidade por iteração: O(1) — pop() no CircularBuffer
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK_NETWORK — Core 1, prioridade 1
+// Mantém a conexão MQTT viva e chama mqttClient.loop() para processar ACKs.
+// Roda com baixa prioridade para não competir com Task_Produtor (Core 0).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static void Task_Network(void* pv) {
+    TickType_t xLastWake = xTaskGetTickCount();
+    while (true) {
+        if (xSemaphoreTake(g_mqttMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+            if (!g_mqttClient.connected()) {
+                g_mqttReady = false;
+                if (g_mqttClient.connect(MQTT_CLIENT_ID "-bench")) {
+                    g_mqttReady = true;
+                    Serial.println("[Network] MQTT reconectado.");
+                }
+            } else {
+                g_mqttClient.loop();
+                g_mqttReady = true;
+            }
+            xSemaphoreGive(g_mqttMutex);
+        }
+        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(50));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK_CONSUMIDOR — Core 1, prioridade 2
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Drena g_demoBuf e publica cada amostra via MQTT real (elderly/samples).
+// A latência de rede bloqueia SOMENTE esta task — o Produtor não é afetado.
+// Sem MQTT disponível, descarta a amostra e registra em g_descartadas.
+//
+// Complexidade por iteração: O(1) — pop() no CircularBuffer
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static void Task_Consumidor(void* pv) {
     while (true) {
         float sample;
@@ -413,10 +466,26 @@ static void Task_Consumidor(void* pv) {
         }
 
         if (got) {
-            // ── Simula latência de rede (bloqueante para ESTE CONSUMIDOR) ─
-            // O Produtor continua a 500 Hz durante estes 80 ms.
-            // O buffer absorve as amostras produzidas enquanto aqui bloqueado.
-            vTaskDelay(pdMS_TO_TICKS(MQTT_LATENCY_MS));
+            if (g_mqttReady &&
+                xSemaphoreTake(g_mqttMutex, pdMS_TO_TICKS(200)) == pdTRUE)
+            {
+                // ── Publica via MQTT real (bloqueante para ESTE CONSUMIDOR) ─
+                // O Produtor continua a 500 Hz durante a latência de rede.
+                // O buffer absorve as amostras produzidas enquanto aqui bloqueado.
+                StaticJsonDocument<128> doc;
+                doc["seq"]      = g_consumidas;
+                doc["value"]    = round(sample * 100.0f) / 100.0f;
+                doc["buf_size"] = (uint32_t)g_demoBuf.size();
+                doc["buf_cap"]  = (uint32_t)g_demoBuf.capacity();
+                doc["produced"] = g_produzidas;
+                char buf[128];
+                serializeJson(doc, buf);
+                g_mqttClient.publish(SAMPLES_TOPIC, buf, false);
+                xSemaphoreGive(g_mqttMutex);
+            } else if (!g_mqttReady) {
+                g_descartadas++;
+            }
+
             g_consumidas++;
 
             // Log a cada 100 amostras consumidas (evita saturar o Serial)
@@ -466,6 +535,30 @@ void setup() {
     Serial.println("╚════════════════════════════════════════════════════════╝");
     Serial.printf("  Heap inicial: %u bytes livres\n\n", ESP.getFreeHeap());
 
+    // ── Conecta Wi-Fi ──────────────────────────────────────────────────────
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.printf("[WiFi] Conectando a \"%s\"", WIFI_SSID);
+    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+        delay(500);
+        Serial.print('.');
+    }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("[WiFi] IP: %s\n", WiFi.localIP().toString().c_str());
+        g_mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+        if (g_mqttClient.connect(MQTT_CLIENT_ID "-bench")) {
+            g_mqttReady = true;
+            Serial.printf("[MQTT] Conectado → publicando em '%s'\n", SAMPLES_TOPIC);
+        } else {
+            Serial.printf("[MQTT] Falha (rc=%d) — demo roda sem publicação.\n",
+                          g_mqttClient.state());
+        }
+    } else {
+        Serial.println("[WiFi] Sem conexão — demo roda sem publicação MQTT.");
+    }
+    Serial.println();
+
     // ── Fase 1: demo do gargalo síncrono (Vertente 1) ─────────────────────
     demo_v1_bloqueante();
 
@@ -504,12 +597,16 @@ void setup() {
     Serial.println();
 
     g_demoBufMutex = xSemaphoreCreateMutex();
+    g_mqttMutex    = xSemaphoreCreateMutex();
 
     // Produtor: Core 0, prioridade 3 — alta para não perder amostras
     xTaskCreatePinnedToCore(Task_Produtor,   "Produtor",   4096, nullptr, 3, nullptr, 0);
 
-    // Consumidor: Core 1, prioridade 1 — baixa, aceita latência de rede
-    xTaskCreatePinnedToCore(Task_Consumidor, "Consumidor", 4096, nullptr, 1, nullptr, 1);
+    // Consumidor: Core 1, prioridade 2 — publica MQTT real
+    xTaskCreatePinnedToCore(Task_Consumidor, "Consumidor", 6144, nullptr, 2, nullptr, 1);
+
+    // Network: Core 1, prioridade 1 — mantém conexão MQTT e chama loop()
+    xTaskCreatePinnedToCore(Task_Network,    "Network",    4096, nullptr, 1, nullptr, 1);
 
     // Status: Core 1, prioridade 1
     xTaskCreatePinnedToCore(Task_Status,     "Status",     2048, nullptr, 1, nullptr, 1);
