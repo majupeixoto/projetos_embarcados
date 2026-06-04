@@ -109,6 +109,8 @@ static uint32_t  preAlertStart = 0;
 static uint32_t  lastBlink     = 0;
 static bool      blinkOn       = true;
 
+static void publishOnline();
+
 static void processSensors() {
     uint32_t now = millis();
 
@@ -289,7 +291,7 @@ static bool connectMQTT() {
 }
 
 static void publishAlert(const AlertEvent_t &ev) {
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["status"]    = "alert";
     doc["cause"]     = (ev.type == ALERT_FALL) ? "fall" : "manual";
     doc["accel_g"]   = serialized(String(ev.accel_g, 2));
@@ -304,14 +306,14 @@ static void publishAlert(const AlertEvent_t &ev) {
 }
 
 static void publishOnline() {
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     doc["status"]    = "online";
     doc["cause"]     = "online";
     doc["device_id"] = DEVICE_ID;
     doc["uptime_ms"] = (uint32_t)millis();
     char buf[128];
     serializeJson(doc, buf);
-    mqttClient.publish(MQTT_TOPIC, buf, false);
+    mqttClient.publish(MQTT_TOPIC, buf, /*retained=*/true);
     Serial.printf("[MQTT] Online: %s\n", buf);
 }
 
@@ -351,6 +353,7 @@ static void handleNetwork() {
     if (alertLedUntil > 0 && now >= alertLedUntil) {
         alertLedUntil = 0;
         setLed(LED_ONLINE);
+        publishOnline();
     }
 }
 
