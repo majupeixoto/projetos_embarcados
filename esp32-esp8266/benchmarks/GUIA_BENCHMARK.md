@@ -214,7 +214,11 @@ BENCHMARK;V2;20000; 1;298432;0
 | `HEAP_LIVRE_BYTES` | Heap disponível após a alocação do buffer V1                |
 | `HEAP_DELTA_BYTES` | Bytes consumidos do heap (V2 deve sempre ser **0**)         |
 
-**Como plotar:** copie as linhas no Excel ou Google Sheets, use "Dados → Texto para Colunas" com separador `;`, crie um gráfico de barras com N no eixo X e `LAT_MEDIA_US` no eixo Y, uma série por vertente.
+**Dashboard (automático):** se o MQTT estiver conectado, esses valores são publicados automaticamente em `elderly/benchmark` → o painel **Análise de Performance** exibe o gráfico de barras e o log de texto em tempo real.
+
+**Alternativa sem ESP32:** com o simulador rodando, digite `b` + Enter — ele publica valores pré-computados realistas no mesmo tópico.
+
+**Excel/Sheets:** copie as linhas, use "Dados → Texto para Colunas" com separador `;`, crie um gráfico de barras com N no eixo X e `LAT_MEDIA_US` no eixo Y, uma série por vertente.
 
 ---
 
@@ -238,17 +242,27 @@ O Produtor (500 Hz) **nunca para** mesmo com o Consumidor bloqueado pelo round-t
 
 ---
 
-### Passo 6 — Observar o gráfico no dashboard
+### Passo 6 — Observar o dashboard
 
-Enquanto a Seção C roda, abra **http://localhost:5000** no browser. O painel **Telemetria em Tempo Real** exibe:
+Abra **http://localhost:5000**. O dashboard exibe três painéis:
 
-- **Gráfico de linha** com as últimas 120 amostras da onda senoidal chegando via MQTT
-- **Produzidas** — total gerado pelo sensor (Task_Produtor)
-- **Publicadas MQTT** — total enviado pelo consumidor (Task_Consumidor)
-- **Buffer** — slots ocupados no CircularBuffer no momento da publicação
-- **Barra de ocupação** — muda de azul → âmbar → vermelho conforme o buffer enche
+**Telemetria em Tempo Real** (tópico `elderly/samples`):
+- Gráfico de linha com as últimas 120 amostras chegando via MQTT
+- Produzidas vs Publicadas — mostra a razão produtor/consumidor
+- Barra de ocupação do buffer — azul → âmbar → vermelho
 
-Isso demonstra visualmente o padrão Produtor–Consumidor: o gráfico continua se atualizando mesmo nos momentos em que o Consumidor está bloqueado pelo round-trip de rede.
+**Análise de Performance** (tópico `elderly/benchmark`):
+- Gráfico de barras agrupado V1 vs V2 por N (escala logarítmica)
+- Log de texto com latência e heap por linha:
+  ```
+  [V1] N=   100  →  Latência: 720 µs    |  Heap livre: 218.432 bytes
+  [V2] N=   100  →  Latência: 1 µs      |  Heap livre: 298.432 bytes
+  [V1] N= 5.000  →  Latência: 36.000 µs |  Heap livre: 198.432 bytes
+  ...
+  ```
+- Cards com V1 N=20.000, V2 N=20.000 e o ganho calculado automaticamente
+
+Os dados chegam automaticamente quando o benchmark roda (se MQTT conectado).
 
 ---
 
