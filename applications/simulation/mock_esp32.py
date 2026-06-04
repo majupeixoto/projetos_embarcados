@@ -32,6 +32,18 @@ DEFAULT_BROKER = "localhost"
 DEFAULT_PORT   = 1883
 DEFAULT_TOPIC  = "elderly/alerts"
 DEFAULT_DEVICE = "esp32_01"
+TOPIC_SAMPLES  = "elderly/samples"
+TOPIC_BENCH    = "elderly/benchmark"
+
+# Resultados pré-computados realistas (espelham o que o ESP32 produziria)
+BENCH_RESULTS = [
+    {"vertente": "V1", "n": 100,   "lat_us": 720,    "heap_livre": 218432, "heap_delta": 400},
+    {"vertente": "V2", "n": 100,   "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
+    {"vertente": "V1", "n": 5000,  "lat_us": 36000,  "heap_livre": 198432, "heap_delta": 20000},
+    {"vertente": "V2", "n": 5000,  "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
+    {"vertente": "V1", "n": 20000, "lat_us": 145000, "heap_livre": 138432, "heap_delta": 80000},
+    {"vertente": "V2", "n": 20000, "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
+]
 
 # ─── Thresholds espelhados do firmware (config.h) ────────────────────────────
 # Mantidos sincronizados com config.h apenas para exibição nos logs.
@@ -274,6 +286,51 @@ def simulate_sit_down():
 
 # ─── Threads de suporte ───────────────────────────────────────────────────────
 
+def telem_thread(client: mqtt.Client, state: DeviceState):
+    """Simula leituras do acelerômetro MPU-6500: ~1g em repouso, queda visível."""
+    seq      = 0
+    produced = 0
+    BUF_CAP  = 64
+    while True:
+        if state.connected:
+            produced += 1
+            buf_size  = min(produced - seq, BUF_CAP)
+
+            # Fase da sequência de queda afeta o valor simulado
+            if _fall_in_progress.is_set():
+                with _pre_alert_lock:
+                    in_pre = _pre_alert_active
+                if in_pre:
+                    value = round(random.uniform(0.05, 0.25), 2)   # queda livre
+                else:
+                    value = round(random.uniform(2.5, 4.5), 2)     # impacto
+            else:
+                # Repouso: ~1g + pequena oscilação (respiração/movimento)
+                value = round(1.0 + 0.12 * math.sin(seq * 0.18)
+                              + random.uniform(-0.04, 0.04), 2)
+
+            payload = json.dumps({
+                "seq":      seq,
+                "value":    value,
+                "buf_size": buf_size,
+                "buf_cap":  BUF_CAP,
+                "produced": produced,
+            })
+            client.publish(TOPIC_SAMPLES, payload, qos=0)
+            seq += 1
+        time.sleep(0.2)
+
+def _publish_benchmark(client: mqtt.Client, state: DeviceState):
+    """Publica resultados simulados do benchmark para o dashboard."""
+    if not state.connected:
+        print(colored("  [!] Sem conexão com o broker.", C.YELLOW))
+        return
+    print(colored("\n  [BENCHMARK] Publicando resultados simulados...", C.CYAN))
+    for result in BENCH_RESULTS:
+        client.publish(TOPIC_BENCH, json.dumps(result), qos=1)
+        time.sleep(0.1)
+    print(colored("  [BENCHMARK] Publicado. Verifique o gráfico no dashboard.\n", C.GREEN))
+
 def auto_fall_thread(client: mqtt.Client, state: DeviceState, interval_s: int):
     """
     Gera quedas automáticas para stress test do dashboard.
@@ -296,6 +353,7 @@ MENU = f"""
   {C.BOLD}f[ENTER]{C.RESET}   → Simular queda completa (4 fases + pré-alerta de 15s)
   {C.BOLD}c[ENTER]{C.RESET}   → Cancelar pré-alerta ativo (simula botão do firmware)
   {C.BOLD}s[ENTER]{C.RESET}   → Simular sentar/abaixar (mostra por que não dispara alarme)
+  {C.BOLD}b[ENTER]{C.RESET}   → Publicar resultados do benchmark no dashboard
   {C.BOLD}q[ENTER]{C.RESET}   → Sair
 """
 
@@ -330,11 +388,14 @@ def command_loop(client: mqtt.Client, state: DeviceState):
             elif cmd == "s":   # simula sentar
                 simulate_sit_down()
 
+            elif cmd == "b":   # publica benchmark
+                _publish_benchmark(client, state)
+
             elif cmd == "q":   # sair
                 break
 
             else:
-                print(colored("  Comando desconhecido. Use ENTER, f, c, s ou q.", C.GRAY))
+                print(colored("  Comando desconhecido. Use ENTER, f, c, s, b ou q.", C.GRAY))
 
     except (KeyboardInterrupt, EOFError):
         pass

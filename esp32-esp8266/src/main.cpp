@@ -4,6 +4,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "config.h"
+#include "CircularBuffer.h"
 
 enum LedState : uint8_t {
     LED_CONNECTING = 0,
@@ -23,6 +24,11 @@ typedef struct {
 
 static WiFiClient   wifiClient;
 static PubSubClient mqttClient(wifiClient);
+
+static CircularBuffer<float, 64> sampleBuf;
+static uint32_t samplesProduced   = 0;
+static uint32_t samplesPublished  = 0;
+static uint32_t lastSamplePublish = 0;
 
 static bool         alertPending  = false;
 static AlertEvent_t pendingAlert  = { 0, 0.0f };
@@ -134,6 +140,9 @@ static void processSensors() {
     float ax, ay, az;
     if (!mpuReadAccel(ax, ay, az)) return;
     float mag = vecMag(ax, ay, az);
+
+    sampleBuf.push(mag);
+    samplesProduced++;
 
     switch (fallState) {
 
@@ -317,6 +326,21 @@ static void publishOnline() {
     Serial.printf("[MQTT] Online: %s\n", buf);
 }
 
+static void publishSample() {
+    float val;
+    if (!sampleBuf.pop(val)) return;
+    JsonDocument doc;
+    doc["seq"]      = samplesPublished;
+    doc["value"]    = roundf(val * 100.0f) / 100.0f;
+    doc["buf_size"] = (int)sampleBuf.size();
+    doc["buf_cap"]  = 64;
+    doc["produced"] = samplesProduced;
+    char buf[128];
+    serializeJson(doc, buf);
+    mqttClient.publish("elderly/samples", buf, false);
+    samplesPublished++;
+}
+
 static void handleNetwork() {
     uint32_t now = millis();
 
@@ -342,6 +366,11 @@ static void handleNetwork() {
     }
 
     mqttClient.loop();
+
+    if (!sampleBuf.isEmpty() && (now - lastSamplePublish) >= 200) {
+        lastSamplePublish = now;
+        publishSample();
+    }
 
     if (alertPending) {
         alertPending  = false;

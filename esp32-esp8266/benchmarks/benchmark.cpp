@@ -274,6 +274,14 @@ static void run_benchmark_v1(uint32_t N) {
     // CSV: TIPO;VERTENTE;N;LAT_MEDIA_US;HEAP_LIVRE_BYTES;HEAP_DELTA_BYTES
     Serial.printf("BENCHMARK;V1;%u;%u;%u;%u\n",
                   N, latMedia, heapAposAlloc, heapDelta);
+
+    if (g_mqttReady) {
+        char jbuf[128];
+        snprintf(jbuf, sizeof(jbuf),
+            "{\"vertente\":\"V1\",\"n\":%u,\"lat_us\":%u,\"heap_livre\":%u,\"heap_delta\":%u}",
+            N, latMedia, heapAposAlloc, heapDelta);
+        g_mqttClient.publish("elderly/benchmark", jbuf, false);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -315,6 +323,14 @@ static void run_benchmark_v2(CircularBuffer<float, CAP>& buf, uint32_t N) {
 
     Serial.printf("BENCHMARK;V2;%u;%u;%u;%u\n",
                   N, latMedia, heapDepois, heapDelta);
+
+    if (g_mqttReady) {
+        char jbuf[128];
+        snprintf(jbuf, sizeof(jbuf),
+            "{\"vertente\":\"V2\",\"n\":%u,\"lat_us\":%u,\"heap_livre\":%u,\"heap_delta\":%u}",
+            N, latMedia, heapDepois, heapDelta);
+        g_mqttClient.publish("elderly/benchmark", jbuf, false);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

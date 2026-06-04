@@ -19,14 +19,16 @@ MQTT_BROKER         = "localhost"
 MQTT_PORT           = 1883
 MQTT_TOPIC_ALERTS   = "elderly/alerts"
 MQTT_TOPIC_SAMPLES  = "elderly/samples"
+MQTT_TOPIC_BENCH    = "elderly/benchmark"
 
 app      = Flask(__name__)
 app.config["SECRET_KEY"] = "vitalink_2025"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # Buffers thread-safe
-events:  deque[dict] = deque(maxlen=100)   # alertas / online / offline
-samples: deque[dict] = deque(maxlen=500)   # telemetria do benchmark
+events:        deque[dict] = deque(maxlen=100)   # alertas / online / offline
+samples:       deque[dict] = deque(maxlen=500)   # telemetria do benchmark
+bench_results: list        = []                  # resultados V1 vs V2 (max 6 entradas)
 broker_connected = False
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -61,7 +63,8 @@ def on_connect(client, userdata, flags, rc, properties=None):
         broker_connected = True
         client.subscribe(MQTT_TOPIC_ALERTS,  qos=1)
         client.subscribe(MQTT_TOPIC_SAMPLES, qos=0)
-        print(f"[MQTT] Conectado → '{MQTT_TOPIC_ALERTS}' + '{MQTT_TOPIC_SAMPLES}'")
+        client.subscribe(MQTT_TOPIC_BENCH,   qos=1)
+        print(f"[MQTT] Conectado → '{MQTT_TOPIC_ALERTS}' + '{MQTT_TOPIC_SAMPLES}' + '{MQTT_TOPIC_BENCH}'")
         socketio.emit("broker_status", {"connected": True})
     else:
         print(f"[MQTT] Falha na conexão (rc={rc})")
@@ -77,6 +80,8 @@ def on_message(client, userdata, msg):
         raw = json.loads(msg.payload.decode())
         if msg.topic == MQTT_TOPIC_SAMPLES:
             _handle_sample(raw)
+        elif msg.topic == MQTT_TOPIC_BENCH:
+            _handle_benchmark(raw)
         else:
             _handle_event(raw)
     except Exception as exc:
@@ -87,6 +92,16 @@ def _handle_event(raw: dict):
     events.appendleft(event)
     socketio.emit("mqtt_event", event)
     print(f"[MQTT] {event['time_str']} [{event['status'].upper()}] {event['device_id']}")
+
+def _handle_benchmark(raw: dict):
+    key = (raw.get("vertente"), raw.get("n"))
+    for i, r in enumerate(bench_results):
+        if (r.get("vertente"), r.get("n")) == key:
+            bench_results[i] = raw
+            break
+    else:
+        bench_results.append(raw)
+    socketio.emit("benchmark_result", raw)
 
 def _handle_sample(raw: dict):
     sample = {
@@ -151,10 +166,11 @@ def api_samples():
 @socketio.on("connect")
 def handle_connect():
     socketio.emit("broker_status", {"connected": broker_connected})
-    # Hidrata o gráfico com as últimas amostras já recebidas
     if samples:
         history = list(reversed(list(samples)[:100]))
         socketio.emit("telem_history", history)
+    if bench_results:
+        socketio.emit("bench_history", bench_results)
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 

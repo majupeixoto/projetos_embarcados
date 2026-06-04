@@ -385,6 +385,58 @@
       </div>
     </div>
 
+    <!-- ── ANÁLISE DE PERFORMANCE ──────────────────────────────────── -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 class="font-semibold text-slate-800 text-sm">Análise de Performance</h3>
+          <p class="text-[11px] text-slate-400">Latência de inserção (µs) · Vertente 1 O(n) vs Vertente 2 O(1) · escala logarítmica</p>
+        </div>
+        <div id="bench-badge"
+             class="hidden items-center gap-1.5 text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-3 py-1.5 rounded-full">
+          <span class="w-1.5 h-1.5 bg-violet-500 rounded-full"></span> DADOS RECEBIDOS
+        </div>
+      </div>
+
+      <!-- Gráfico -->
+      <div class="px-6 pt-5 pb-2">
+        <canvas id="benchChart" height="90"></canvas>
+      </div>
+
+      <!-- Log texto -->
+      <div class="px-6 pb-2">
+        <div id="bench-log"
+             class="mono text-[11px] bg-slate-950 text-emerald-400 rounded-xl p-4 min-h-[60px] space-y-0.5">
+          <p class="bench-placeholder text-slate-500">Aguardando dados — use <span class="text-slate-300">b[ENTER]</span> no simulador ou rode o benchmark no ESP32.</p>
+        </div>
+      </div>
+
+      <!-- Legenda de resultados -->
+      <div class="px-6 pb-5 grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
+        <div class="sm:col-span-3 text-[10px] text-slate-400 text-center">
+          Use <span class="mono bg-slate-100 px-1.5 py-0.5 rounded">b[ENTER]</span> no simulador
+          ou rode o benchmark no ESP32 para popular o gráfico.
+        </div>
+        <div class="bg-red-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-red-500 uppercase tracking-wider mb-1">V1 · N=20.000</p>
+          <p id="bench-v1-20k" class="mono text-lg font-bold text-red-700">—</p>
+          <p class="text-[10px] text-red-400 mt-0.5">µs por inserção</p>
+        </div>
+        <div class="bg-blue-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-blue-500 uppercase tracking-wider mb-1">V2 · N=20.000</p>
+          <p id="bench-v2-20k" class="mono text-lg font-bold text-blue-700">—</p>
+          <p class="text-[10px] text-blue-400 mt-0.5">µs por inserção</p>
+        </div>
+        <div class="bg-slate-50 rounded-xl p-3.5 text-center">
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Ganho</p>
+          <p id="bench-speedup" class="mono text-lg font-bold text-slate-800">—</p>
+          <p class="text-[10px] text-slate-400 mt-0.5">V1 / V2</p>
+        </div>
+      </div>
+    </div>
+
   </div><!-- end scrollable content -->
 </main>
 
@@ -749,6 +801,110 @@ socket.on('telem_history', (history) => {
 });
 
 socket.on('telemetry_sample', telemPush);
+
+// ── Benchmark — Chart.js ───────────────────────────────────────────────────
+const N_LABELS = ['N = 100', 'N = 5.000', 'N = 20.000'];
+const N_IDX    = { 100: 0, 5000: 1, 20000: 2 };
+const benchV1  = [null, null, null];
+const benchV2  = [null, null, null];
+
+const benchChart = new Chart(
+  document.getElementById('benchChart').getContext('2d'),
+  {
+    type: 'bar',
+    data: {
+      labels: N_LABELS,
+      datasets: [
+        {
+          label:           'Vertente 1 — O(n) memmove',
+          data:            benchV1,
+          backgroundColor: 'rgba(239,68,68,0.75)',
+          borderColor:     'rgba(239,68,68,1)',
+          borderWidth:     1,
+          borderRadius:    4,
+        },
+        {
+          label:           'Vertente 2 — O(1) CircularBuffer',
+          data:            benchV2,
+          backgroundColor: 'rgba(59,130,246,0.75)',
+          borderColor:     'rgba(59,130,246,1)',
+          borderWidth:     1,
+          borderRadius:    4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          labels: { font: { family: 'JetBrains Mono', size: 10 }, color: '#64748b' },
+        },
+        tooltip: {
+          callbacks: { label: ctx => ` ${ctx.parsed.y.toLocaleString('pt-BR')} µs` },
+          backgroundColor: '#1e293b',
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          padding: 8,
+        },
+      },
+      scales: {
+        x: {
+          grid:  { display: false },
+          ticks: { font: { family: 'JetBrains Mono', size: 10 }, color: '#64748b' },
+        },
+        y: {
+          type: 'logarithmic',
+          grid:   { color: 'rgba(148,163,184,0.15)' },
+          border: { display: false },
+          title:  { display: true, text: 'Latência (µs) — escala log', color: '#94a3b8',
+                    font: { family: 'JetBrains Mono', size: 9 } },
+          ticks: {
+            font:  { family: 'JetBrains Mono', size: 9 },
+            color: '#94a3b8',
+            callback: v => v.toLocaleString('pt-BR') + ' µs',
+          },
+        },
+      },
+    },
+  }
+);
+
+function benchPush(d) {
+  const idx = N_IDX[d.n];
+  if (idx === undefined) return;
+  if (d.vertente === 'V1') benchV1[idx] = d.lat_us;
+  else                     benchV2[idx] = d.lat_us;
+  benchChart.data.datasets[0].data = [...benchV1];
+  benchChart.data.datasets[1].data = [...benchV2];
+  benchChart.update();
+
+  // Log texto
+  const log = document.getElementById('bench-log');
+  const placeholder = log.querySelector('.bench-placeholder');
+  if (placeholder) placeholder.remove();
+  const line = document.createElement('p');
+  const color = d.vertente === 'V1' ? 'text-red-400' : 'text-blue-400';
+  const nFmt  = d.n.toLocaleString('pt-BR');
+  const latFmt = d.lat_us.toLocaleString('pt-BR');
+  const heapFmt = d.heap_livre.toLocaleString('pt-BR');
+  line.className = color;
+  line.textContent = `[${d.vertente}] N=${nFmt.padStart(6)}  →  Latência: ${latFmt} µs  |  Heap livre: ${heapFmt} bytes`;
+  log.appendChild(line);
+
+  // Atualiza os cards de resumo
+  if (benchV1[2] != null) document.getElementById('bench-v1-20k').textContent =
+    benchV1[2].toLocaleString('pt-BR');
+  if (benchV2[2] != null) document.getElementById('bench-v2-20k').textContent =
+    benchV2[2].toLocaleString('pt-BR');
+  if (benchV1[2] != null && benchV2[2] != null && benchV2[2] > 0)
+    document.getElementById('bench-speedup').textContent =
+      Math.round(benchV1[2] / benchV2[2]).toLocaleString('pt-BR') + '×';
+
+  document.getElementById('bench-badge').classList.replace('hidden', 'flex');
+}
+
+socket.on('benchmark_result', benchPush);
+socket.on('bench_history',    (list) => list.forEach(benchPush));
 
 socket.on('mqtt_event', (ev) => {
   applyStatus(ev);
