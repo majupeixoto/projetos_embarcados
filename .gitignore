@@ -5,3 +5,5 @@
 .vscode/ipch
 .venv
 /venv
+.env
+*.env
