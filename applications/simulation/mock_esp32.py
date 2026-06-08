@@ -17,6 +17,7 @@ Uso:          python mock_esp32.py
 """
 
 import argparse
+import ctypes
 import json
 import math
 import random
@@ -35,15 +36,78 @@ DEFAULT_DEVICE = "esp32_01"
 TOPIC_SAMPLES  = "elderly/samples"
 TOPIC_BENCH    = "elderly/benchmark"
 
-# Resultados pré-computados realistas (espelham o que o ESP32 produziria)
-BENCH_RESULTS = [
-    {"vertente": "V1", "n": 100,   "lat_us": 720,    "heap_livre": 218432, "heap_delta": 400},
-    {"vertente": "V2", "n": 100,   "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
-    {"vertente": "V1", "n": 5000,  "lat_us": 36000,  "heap_livre": 198432, "heap_delta": 20000},
-    {"vertente": "V2", "n": 5000,  "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
-    {"vertente": "V1", "n": 20000, "lat_us": 145000, "heap_livre": 138432, "heap_delta": 80000},
-    {"vertente": "V2", "n": 20000, "lat_us": 1,      "heap_livre": 298432, "heap_delta": 0},
-]
+# ─── Benchmark computado em tempo real ───────────────────────────────────────
+#
+# N escolhidos para o ESP8266 (80KB RAM):
+#   N=100  →   400 bytes de heap consumidos pelo V1
+#   N=500  → 2.000 bytes de heap consumidos pelo V1
+#   N=2000 → 8.000 bytes de heap consumidos pelo V1  ← limite seguro
+#
+# V1: ctypes.memmove real — cópia física de memória em C, O(n)
+# V2: aritmética de ponteiro  head = (head+1) % N    — O(1)
+#
+# Os tempos são medidos no PC, mas a proporção V1/V2 demonstra o mesmo
+# comportamento assintótico que o ESP8266 exibiria no hardware.
+# Heap simulado: ~45 KB disponíveis no ESP8266 após inicialização do WiFi.
+
+_BENCH_NS    = (100, 5000, 20000)
+_BENCH_REPS  = 100
+_ESP32_HEAP  = 298432   # bytes livres simulados (ESP32 após WiFi+MQTT)
+
+# Fator de escala PC → ESP32
+# PC roda ~3GHz, ESP32 @ 240MHz → operações de memória ~12.5x mais lentas
+_SCALE = 3000 / 240   # ≈ 12.5
+
+def _compute_benchmark_results():
+    results    = []
+    float_size = ctypes.sizeof(ctypes.c_float)
+
+    for N in _BENCH_NS:
+        heap_delta_v1 = N * float_size
+
+        # ── V1: SlidingWindow — memmove real medido no PC, escalado pro ESP32
+        arr_v1 = (ctypes.c_float * N)(*[i * 0.01 for i in range(N)])
+
+        t0 = time.perf_counter()
+        for i in range(_BENCH_REPS):
+            ctypes.memmove(
+                arr_v1,
+                ctypes.addressof(arr_v1) + float_size,
+                (N - 1) * float_size,
+            )
+            arr_v1[N - 1] = i * 0.01
+        lat_pc_v1 = (time.perf_counter() - t0) / _BENCH_REPS * 1_000_000
+        lat_v1    = max(1, int(lat_pc_v1 * _SCALE))
+
+        results.append({
+            "vertente": "V1", "n": N,
+            "lat_us":    lat_v1,
+            "heap_livre": _ESP32_HEAP - heap_delta_v1,
+            "heap_delta": heap_delta_v1,
+        })
+
+        # ── V2: CircularBuffer — ponteiro circular medido no PC, escalado pro ESP32
+        arr_v2 = (ctypes.c_float * N)(*[0.0] * N)
+        head   = 0
+        for i in range(N):      # pré-preenchimento (igual ao benchmark C++)
+            arr_v2[head] = i * 0.01
+            head = (head + 1) % N
+
+        t0 = time.perf_counter()
+        for i in range(_BENCH_REPS):
+            arr_v2[head] = i * 0.01
+            head = (head + 1) % N
+        lat_pc_v2 = (time.perf_counter() - t0) / _BENCH_REPS * 1_000_000
+        lat_v2    = max(1, int(lat_pc_v2 * _SCALE))
+
+        results.append({
+            "vertente": "V2", "n": N,
+            "lat_us":    lat_v2,
+            "heap_livre": _ESP32_HEAP,
+            "heap_delta": 0,
+        })
+
+    return results
 
 # ─── Thresholds espelhados do firmware (config.h) ────────────────────────────
 # Mantidos sincronizados com config.h apenas para exibição nos logs.
@@ -321,15 +385,22 @@ def telem_thread(client: mqtt.Client, state: DeviceState):
         time.sleep(0.2)
 
 def _publish_benchmark(client: mqtt.Client, state: DeviceState):
-    """Publica resultados simulados do benchmark para o dashboard."""
+    """Computa e publica os resultados do benchmark para o dashboard."""
     if not state.connected:
         print(colored("  [!] Sem conexão com o broker.", C.YELLOW))
         return
-    print(colored("\n  [BENCHMARK] Publicando resultados simulados...", C.CYAN))
-    for result in BENCH_RESULTS:
+    print(colored("\n  [BENCHMARK] Calculando V1 vs V2 (memmove real)...", C.CYAN))
+    results = _compute_benchmark_results()
+    for result in results:
+        v      = result["vertente"]
+        n      = result["n"]
+        lat    = result["lat_us"]
+        color  = C.RED if v == "V1" else C.BLUE
+        print(colored(f"  [{v}] N={n:>5}  →  Latência: {lat} µs  |  "
+                      f"Heap delta: {result['heap_delta']} bytes", color))
         client.publish(TOPIC_BENCH, json.dumps(result), qos=1)
         time.sleep(0.1)
-    print(colored("  [BENCHMARK] Publicado. Verifique o gráfico no dashboard.\n", C.GREEN))
+    print(colored("  [BENCHMARK] Concluído. Verifique o gráfico no dashboard.\n", C.GREEN))
 
 def auto_fall_thread(client: mqtt.Client, state: DeviceState, interval_s: int):
     """
