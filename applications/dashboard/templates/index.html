@@ -74,7 +74,24 @@
     </div>
   </div>
 
-  <div class="flex-1"></div>
+  <!-- Newsletter -->
+  <div class="flex-1 flex flex-col justify-end px-4 pt-4 pb-1">
+    <div class="border-t border-white/10 pt-4">
+      <p class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1.5">
+        <i class="fas fa-envelope text-[9px] mr-1"></i> Boletim Diário
+      </p>
+      <p class="text-[11px] text-slate-500 mb-3 leading-relaxed">
+        Receba um resumo dos registros de hoje por e-mail.
+      </p>
+      <input id="nl-email" type="email" placeholder="seu@email.com"
+        class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/60 mb-2 transition-colors">
+      <button id="nl-btn" onclick="sendNewsletter()"
+        class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5">
+        <i class="fas fa-paper-plane text-[10px]"></i> Enviar Boletim
+      </button>
+      <p id="nl-msg" class="text-[11px] mt-2 text-center hidden"></p>
+    </div>
+  </div>
 
   <!-- Broker status pill -->
   <div class="px-4 pb-5">
@@ -686,6 +703,46 @@ function setBroker(ok) {
     icon.className = 'fas fa-plug-circle-xmark text-red-400 text-xs flex-shrink-0 ml-auto';
     lbl.textContent = 'Desconectado';
   }
+}
+
+// ── Newsletter ─────────────────────────────────────────────────────────────
+async function sendNewsletter() {
+  const email = document.getElementById('nl-email').value.trim();
+  if (!email) { showNlMsg('Digite um e-mail válido.', 'error'); return; }
+
+  const btn = document.getElementById('nl-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin text-[10px]"></i> Enviando...';
+
+  try {
+    const res  = await fetch('/api/send-report', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email }),
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      showNlMsg('✓ Boletim enviado!', 'ok');
+      document.getElementById('nl-email').value = '';
+    } else {
+      showNlMsg(data.error || 'Erro ao enviar.', 'error');
+    }
+  } catch {
+    showNlMsg('Erro de conexão com o servidor.', 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fas fa-paper-plane text-[10px]"></i> Enviar Boletim';
+}
+
+function showNlMsg(text, type) {
+  const el = document.getElementById('nl-msg');
+  el.textContent = text;
+  el.className = `text-[11px] mt-2 text-center ${type === 'ok' ? 'text-emerald-400' : 'text-red-400'}`;
+  el.classList.remove('hidden');
+  clearTimeout(el._tid);
+  el._tid = setTimeout(() => el.classList.add('hidden'), 5000);
 }
 
 // ── Telemetria — Chart.js ──────────────────────────────────────────────────
