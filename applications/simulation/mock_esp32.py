@@ -112,11 +112,11 @@ def _compute_benchmark_results():
 # ─── Thresholds espelhados do firmware (config.h) ────────────────────────────
 # Mantidos sincronizados com config.h apenas para exibição nos logs.
 FREEFALL_THRESHOLD_G = 0.50
-IMPACT_THRESHOLD_G   = 2.80
-FALL_WINDOW_MS       = 500
+IMPACT_THRESHOLD_G   = 1.80
+FALL_WINDOW_MS       = 1000
 IMMOBILITY_THRESHOLD = 0.15
 IMMOBILITY_DELAY_S   = 3.0
-CANCEL_WINDOW_S      = 15
+CANCEL_WINDOW_S      = 10
 
 # ─── Estado do dispositivo simulado ──────────────────────────────────────────
 
