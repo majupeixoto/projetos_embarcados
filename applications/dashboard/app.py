@@ -83,7 +83,7 @@ def on_connect(client, userdata, flags, rc, properties=None):
         client.subscribe(MQTT_TOPIC_ALERTS,  qos=1)
         client.subscribe(MQTT_TOPIC_SAMPLES, qos=0)
         client.subscribe(MQTT_TOPIC_BENCH,   qos=1)
-        print(f"[MQTT] Conectado → '{MQTT_TOPIC_ALERTS}' + '{MQTT_TOPIC_SAMPLES}' + '{MQTT_TOPIC_BENCH}'")
+        print(f"[MQTT] Conectado: {MQTT_TOPIC_ALERTS} + {MQTT_TOPIC_SAMPLES} + {MQTT_TOPIC_BENCH}")
         socketio.emit("broker_status", {"connected": True})
     else:
         print(f"[MQTT] Falha na conexão (rc={rc})")
